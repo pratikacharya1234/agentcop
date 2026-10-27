@@ -12,6 +12,7 @@ members = [
   "crates/cop-codex",
   "crates/cop-honeypot",
   "crates/cop-ratelimit",
+  "crates/cop-pipeline",
 ]
 
 [workspace.package]
