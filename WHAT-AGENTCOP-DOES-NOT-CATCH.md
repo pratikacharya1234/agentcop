@@ -1,6 +1,6 @@
 # What AgentCop does not catch
 
-DRAFT for owner review. Not published. This page lists what AgentCop misses today, so nobody reads more into a passing check than is there. Known misses are also tracked in the attack suite ([docs/internal-affairs.md](internal-affairs.md)) and in [THREAT_MODEL.md](../THREAT_MODEL.md).
+DRAFT for owner review. Not published. This page lists what AgentCop misses today, so nobody reads more into a passing check than is there. Known misses are also tracked in the attack suite (`docs/internal-affairs.md`, kept locally) and in [THREAT_MODEL.md](../THREAT_MODEL.md).
 
 ## Coverage limits
 - **Claude Code only.** `agentcop install` writes the hook to `~/.claude/settings.json`. Nothing installs into Codex, OpenCode, or other agents, even though a Codex parser exists as library code.
