@@ -11,6 +11,7 @@ members = [
   "crates/cop-normalizer",
   "crates/cop-codex",
   "crates/cop-honeypot",
+  "crates/cop-ratelimit",
 ]
 
 [workspace.package]

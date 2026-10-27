@@ -1,0 +1,12 @@
+[package]
+name = "cop-ratelimit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+cop-core = { path = "../cop-core" }
+
+[dev-dependencies]
+serde_json = "1.0"
