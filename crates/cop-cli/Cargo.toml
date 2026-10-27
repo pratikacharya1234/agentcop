@@ -1,0 +1,19 @@
+[package]
+name = "cop-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "agentcop"
+path = "src/main.rs"
+
+[dependencies]
+cop-core = { path = "../cop-core" }
+cop-policy = { path = "../cop-policy" }
+cop-evidence = { path = "../cop-evidence" }
+clap = { version = "4.4", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]

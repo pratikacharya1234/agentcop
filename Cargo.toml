@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/cop-core",
+  "crates/cop-policy",
+  "crates/cop-evidence",
+  "crates/cop-hook",
+  "crates/cop-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+authors = ["Pratik Acharya <acharyapratik214@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/pratik214/agentcop"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
