@@ -21,6 +21,7 @@ members = [
   "crates/cop-case",
   "crates/cop-detective",
   "crates/cop-fixer",
+  "crates/cop-affairs",
 ]
 
 [workspace.package]
