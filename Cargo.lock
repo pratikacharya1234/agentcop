@@ -308,6 +308,7 @@ dependencies = [
  "cop-core",
  "cop-evidence",
  "cop-policy",
+ "cop-taint",
  "dirs",
  "regex",
  "rusqlite",

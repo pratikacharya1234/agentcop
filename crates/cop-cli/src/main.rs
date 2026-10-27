@@ -9,6 +9,7 @@
 //! 6. Support --dry-run, idempotent operations
 
 mod fix;
+mod release;
 
 use clap::{Parser, Subcommand};
 use cop_evidence::EvidenceStore;
@@ -38,6 +39,11 @@ enum Commands {
     Verify,
     /// List recent cases
     Cases,
+    /// End a Rule of Two freeze. Asks first; the release is logged with who and when
+    Release {
+        /// Session ID, as the freeze message names it
+        session: String,
+    },
     /// Suggest a deny rule for a case, show the diff, and ask before applying
     Fix {
         /// Case ID, e.g. CASE-0123456789ab
@@ -61,6 +67,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Verify => verify(),
         Commands::Cases => cases(),
         Commands::Fix { case_id } => fix::run(&case_id),
+        Commands::Release { session } => release::run(&session),
     }
 }
 

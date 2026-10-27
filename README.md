@@ -29,7 +29,7 @@
 - **Judge.** Rules in `policy/default.toml` (regex, strictest verdict wins). Blocks destructive removes of root or home, production deletes, secret-file reads, piping downloads into a shell, and attempts to stop or edit the cop. Asks before `git push`.
 - **Evidence.** Every decision goes into a SQLite store (`~/.agentcop/evidence.db`). Each row is hash-chained to the one before it, and `agentcop verify` checks the chain.
 - **Case numbers.** Every verdict ends with `[CASE-xxxxxxxxxxxx]`. `agentcop fix` turns a case into a deny rule you review before it is written.
-- **Rule of Two.** A session that reads untrusted input, touches sensitive data, and takes an external action is frozen for the rest of that session.
+- **Rule of Two.** A session that takes in untrusted input (web results, downloads, cloned repo files), touches sensitive data, and takes an external action (an upload, a push, a network send) is frozen. A frozen session blocks only external actions; local work continues. Only a person ends a freeze, with `agentcop release <session>`.
 - **Log-only mode.** `mode = "log-only"` allows every call and records what would have been blocked. Use it to measure false positives before you enforce.
 - **Courtroom.** A local dashboard (`courtroom/`) that lists cases, shows a redacted mugshot card and PNG, and records release or convict decisions.
 - **Detective.** An offline Python reader (`detective/`) that can only raise a case's severity. Its output is schema-checked. It has no tools.

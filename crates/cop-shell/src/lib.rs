@@ -59,6 +59,7 @@ fn analyze_into(src: &str, depth: usize, base_line: usize, out: &mut Analysis) {
         cur: base_line + 1,
         out,
         cwd: None,
+        cwd_unknown: false,
     };
     walker.visit(root);
 }
@@ -73,6 +74,8 @@ struct Walker<'a> {
     out: &'a mut Analysis,
     /// Directory set by a literal `cd` earlier in the same command, for relative write paths.
     cwd: Option<String>,
+    /// A `cd` to a run-time value made the directory unknown: relative paths can not be resolved.
+    cwd_unknown: bool,
 }
 
 impl Walker<'_> {
@@ -164,6 +167,8 @@ impl Walker<'_> {
             self.emit(format!("exec {}", argv.join(" ")));
             self.judge_name(node, &argv);
             self.script_target(&argv);
+            self.runner_target(&argv);
+            self.find_delete_target(&argv);
             self.destructive_target(&argv);
             self.track_cd(&argv);
             self.write_targets(&argv);
@@ -236,6 +241,10 @@ impl Walker<'_> {
         };
         if let Some((path, maybe)) = target {
             let kind = if maybe { "script-maybe" } else { "script" };
+            if self.relative_unknown(&path) {
+                self.uncertain("the directory of a script is set at run time");
+                return;
+            }
             let resolved = self.normalize(&path);
             self.emit(format!("{kind} {resolved}"));
         }
@@ -248,14 +257,116 @@ impl Walker<'_> {
         }
     }
 
+    /// Files that a runner executes (python, node, ruby, perl, php, lua, make, npm run, npx, cargo).
+    /// The judge asks when one of them was written this session.
+    fn runner_target(&mut self, argv: &[String]) {
+        let name = base_name(&argv[0]);
+        let args = &argv[1..];
+        let interpreter = name.starts_with("python")
+            || matches!(name.as_str(), "perl" | "node" | "ruby" | "php" | "lua");
+        let files: Vec<String> = if interpreter {
+            let inline = args
+                .iter()
+                .any(|a| matches!(a.as_str(), "-c" | "-e" | "-E" | "-m" | "-p"));
+            let first = args.iter().find(|a| !a.starts_with('-'));
+            if inline {
+                Vec::new()
+            } else {
+                first.cloned().into_iter().collect()
+            }
+        } else if name == "make" {
+            match args.iter().position(|a| a == "-f") {
+                Some(i) => args.get(i + 1).cloned().into_iter().collect(),
+                None => vec!["Makefile".to_string()],
+            }
+        } else if name == "npm"
+            && args.first().is_some_and(|s| {
+                matches!(s.as_str(), "run" | "run-script" | "test" | "start" | "exec")
+            })
+        {
+            vec!["package.json".to_string()]
+        } else if name == "npx" {
+            args.iter()
+                .find(|a| !a.starts_with('-'))
+                .cloned()
+                .into_iter()
+                .collect()
+        } else if name == "cargo"
+            && args
+                .first()
+                .is_some_and(|s| matches!(s.as_str(), "run" | "build" | "test" | "check" | "bench"))
+        {
+            vec!["build.rs".to_string()]
+        } else {
+            Vec::new()
+        };
+        for file in files {
+            if self.relative_unknown(&file) {
+                self.uncertain("the directory of a file that runs is set at run time");
+            } else {
+                let resolved = self.normalize(&file);
+                self.emit(format!("runs-file {resolved}"));
+            }
+        }
+    }
+
+    /// `find ... -delete`: the start paths are the words before the first expression. A quoted
+    /// pattern (`'*.log'`) is a find pattern, not a shell glob, so it is not a target.
+    fn find_delete_target(&mut self, argv: &[String]) {
+        if base_name(&argv[0]) != "find" || !argv.iter().any(|a| a == "-delete") {
+            return;
+        }
+        let starts: Vec<String> = argv[1..]
+            .iter()
+            .take_while(|a| !(a.starts_with('-') || a.starts_with('(') || a.starts_with('!')))
+            .cloned()
+            .collect();
+        let starts = if starts.is_empty() {
+            vec![".".to_string()]
+        } else {
+            starts
+        };
+        for start in starts {
+            if start.contains(['$', '`']) {
+                self.uncertain("the find start path is set at run time");
+            } else if self.relative_unknown(&start) {
+                self.uncertain("the directory of a find start path is set at run time");
+            } else {
+                let resolved = self.normalize(&start);
+                self.emit(format!("find-delete {resolved}"));
+            }
+        }
+    }
+
+    /// `cd` with a literal target sets the directory for later relative paths. A run-time target
+    /// (a variable or a backtick) makes the directory unknown until an absolute `cd`.
     fn track_cd(&mut self, argv: &[String]) {
         if argv[0] != "cd" {
             return;
         }
-        self.cwd = match argv.get(1) {
-            Some(dir) => Some(self.normalize(dir)),
-            None => Some("~".to_string()),
-        };
+        match argv.get(1) {
+            None => {
+                self.cwd = Some("~".to_string());
+                self.cwd_unknown = false;
+            }
+            Some(dir) if run_time_word(dir) => {
+                self.cwd = None;
+                self.cwd_unknown = true;
+                self.uncertain("the directory is set at run time");
+            }
+            Some(dir) => {
+                if self.cwd_unknown && !is_absolute_word(dir) {
+                    return;
+                }
+                self.cwd_unknown = false;
+                self.cwd = Some(self.normalize(dir));
+            }
+        }
+    }
+
+    /// A relative path while the directory is unknown can not be resolved, so the judge must ask.
+    fn relative_unknown(&self, path: &str) -> bool {
+        self.cwd_unknown && !is_absolute_word(path)
     }
 
     /// File arguments of commands that write files. Only the words that name files count.
@@ -353,6 +464,10 @@ impl Walker<'_> {
         if path.starts_with("/dev/") || path.is_empty() {
             return;
         }
+        if self.relative_unknown(path) {
+            self.uncertain("the directory of a file that is written is set at run time");
+            return;
+        }
         let normalized = self.normalize(path);
         self.emit(format!("write {normalized}"));
     }
@@ -390,11 +505,27 @@ fn destructive_with_unknown_target(argv: &[String]) -> bool {
         "git" => {
             args.first().is_some_and(|sub| sub == "clean") && args.iter().any(|a| short(a, "f"))
         }
-        "find" => args.iter().any(|a| a == "-delete"),
         _ => false,
     };
     let unknown_target = args.iter().any(|a| a.contains(['$', '`', '*', '?', '[']));
     destructive && unknown_target
+}
+
+/// A word whose value is only known at run time: it has `$` or a backtick, other than `$HOME/`.
+fn run_time_word(word: &str) -> bool {
+    let rest = word
+        .strip_prefix("$HOME/")
+        .or_else(|| word.strip_prefix("${HOME}/"))
+        .unwrap_or(word);
+    rest.contains(['$', '`'])
+}
+
+/// A path that does not depend on the current directory.
+fn is_absolute_word(word: &str) -> bool {
+    word.starts_with('/')
+        || word.starts_with('~')
+        || word.starts_with("$HOME/")
+        || word.starts_with("${HOME}/")
 }
 
 fn base_name(word: &str) -> String {

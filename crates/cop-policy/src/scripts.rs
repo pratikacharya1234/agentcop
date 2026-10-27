@@ -33,21 +33,48 @@ pub(crate) fn script_calls(actions: &[String]) -> Vec<(usize, &str, bool)> {
         .collect()
 }
 
+/// The files a list of action lines runs with a runner (python, make, npm run...), with the action index.
+pub(crate) fn runs_file_calls(actions: &[String]) -> Vec<(usize, &str)> {
+    actions
+        .iter()
+        .enumerate()
+        .filter_map(|(i, a)| a.strip_prefix("runs-file ").map(|p| (i, p)))
+        .collect()
+}
+
 impl Judge {
+    /// A file a runner executes. Its contents are not read (they are not shell). The judge asks when
+    /// the agent wrote or changed it this session.
+    pub(crate) fn runs_file_verdict(
+        &self,
+        raw: &str,
+        cwd: &Path,
+        written: &[String],
+    ) -> Option<(Verdict, String)> {
+        let abs = cop_core::absolute_path(raw, cwd);
+        written.contains(&abs).then(|| {
+            (
+                Verdict::Ask,
+                format!("{raw}: created or changed by the agent this session; asks"),
+            )
+        })
+    }
+
     /// Judge one script file. `None` means "not a script" (only for a `maybe` path).
+    /// Relative paths resolve against `cwd`, the directory of the event.
     pub(crate) fn inspect_script(
         &self,
         raw: &str,
         maybe: bool,
         depth: usize,
         written: &[String],
+        cwd: &Path,
     ) -> Option<(Verdict, String)> {
         if depth > MAX_SCRIPT_DEPTH {
             let why = format!("{raw}: scripts nested deeper than {MAX_SCRIPT_DEPTH} levels; asks");
             return Some((Verdict::Ask, why));
         }
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let abs = cop_core::absolute_path(raw, &cwd);
+        let abs = cop_core::absolute_path(raw, cwd);
         let text = match read_script(Path::new(&abs), maybe) {
             Ok(None) => return None,
             Ok(Some(text)) => text,
@@ -73,7 +100,7 @@ impl Judge {
         }
         for (i, child, child_maybe) in script_calls(&analysis.actions) {
             if let Some((verdict, reason)) =
-                self.inspect_script(child, child_maybe, depth + 1, written)
+                self.inspect_script(child, child_maybe, depth + 1, written, cwd)
             {
                 let line = analysis.lines[i];
                 result = keep_stricter(result, (verdict, format!("{raw} line {line} -> {reason}")));

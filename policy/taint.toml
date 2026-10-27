@@ -1,7 +1,15 @@
-# Rule of Two rules. A session that reads untrusted input, touches sensitive data,
-# and takes an external action is frozen. Empty sensitive or external lists are refused.
-untrusted_tools = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
-untrusted_bash = ['\b(cat|head|tail|less|more|grep|rg|jq)\b']
+# Rule of Two rules (owner's semantics, 2026-10-27). A session that reads untrusted input, touches
+# sensitive data and takes an external action is frozen. A frozen session blocks only external actions.
+#
+# Untrusted input is external data only: web results, MCP results, downloads (curl, wget), and files
+# inside a repo the session cloned. A local read, grep or listing is not untrusted.
+untrusted_tools = ["WebFetch", "WebSearch"]
+# Tools that send data out. Web reads are not external: a read is data from outside, not an action.
+external_tools = []
+# Tools that read a path. A path inside a cloned repo makes the read untrusted.
+read_tools = ["Read", "Grep", "Glob"]
+# Bash commands that download (the output is data from outside) or clone a third-party repo.
+untrusted_bash = ['\b(curl|wget)\b', '\bgit\s+clone\b']
 # Matched against what a command does (its words and write targets), not against text in heredocs.
 sensitive = [
   '\.env\b',
@@ -16,10 +24,13 @@ sensitive = [
 sensitive_content = [
   'AKIA[0-9A-Z]{16}',
 ]
+# External actions send data out: uploads (curl or wget with a body or a form, or a PUT/POST), network
+# copy and remote shell tools, git push and clone, gh write commands, publish. A plain download is not.
 external = [
-  '(?:^|[\s;&|(\x22])(curl|wget|scp|sftp|rsync|nc|ncat|ssh|ftp)\b',
-  'git\s+push',
+  '(?:^|[\s;&|(\x22])(scp|sftp|rsync|nc|ncat|ssh|ftp)\b',
+  '(?:^|[\s;&|(\x22])(curl|wget)\b.*(?:\s-(?:d|F|T)\b|\s--(?:data|form|upload-file|post-data|post-file)|\s-X\s*(?:POST|PUT|PATCH))',
+  'git\s+(push|clone)\b',
   '\bgh\s+(pr|issue|gist|release)\b',
   '\b(npm|cargo)\s+publish\b',
 ]
-# MCP tools (names starting mcp__) always count as external.
+# MCP tools (names starting mcp__) always count as external and untrusted.

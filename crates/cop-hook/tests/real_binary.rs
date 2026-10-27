@@ -156,7 +156,9 @@ fn real_binary_verdicts_match_expected_for_each_case() {
         (
             "Edit CLAUDE.md",
             event("Edit", json!({ "file_path": "CLAUDE.md" })),
-            "deny",
+            // 2026-10-27: was "deny" only because an earlier case froze the shared session; the
+            // freeze now blocks external actions only, so the approved CLAUDE.md rule decides: ask.
+            "ask",
         ),
     ];
 

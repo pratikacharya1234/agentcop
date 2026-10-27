@@ -59,7 +59,8 @@
 ## Known limitations and future hardening
 
 - **eBPF on macOS**: Stage D uses Aya (Linux eBPF). macOS requires Endpoint Security framework (future work).
-- **Rule of Two taint tracking**: Stage F's three-way taint (untrusted data + secrets + external actions) is conservative and may need refinement based on real-world use.
+- **Rule of Two (2026-10-27 semantics)**: untrusted input is external data only (web results, downloads, MCP results, files in repos the session cloned). External actions are uploads and sends: a push, an upload (curl or wget with a body or a form, or PUT/POST), MCP calls, remote copy and shell. A frozen session blocks only external actions. The freeze has no expiry; `agentcop release` ends it after a confirmation, and the release is logged.
+- **Rule of Two gaps**: a plain GET (`curl URL`, `wget URL`, WebFetch, WebSearch) is not an external action, so a secret placed in a URL query is not caught by the freeze. Untrusted input is tracked only for repos the session cloned; a repo that was already on disk, or an archive extracted by the session, is not tracked. The counter does not persist across a freeze that was never released.
 - **Detective injection**: Even with a strict schema, an LLM may be fooled by carefully crafted evidence. The detective has no tools, but output is still validated.
 - **Egress (D4)**: `cop-proxy` checks the host name of HTTPS (CONNECT) traffic but does not read its body. A secret sent over HTTPS to an allowed host is not caught. Headers and DNS rebinding are not checked either. Plaintext `http://` URLs and bodies are scanned.
 - **Holding cell (D5)**: freezing relies on cgroup v2 when available. Without it, SIGSTOP stops only the pids the caller gives us. A process the caller did not list keeps running. The cop refuses to freeze pid 1 and itself.
@@ -90,3 +91,4 @@
 | 0.0.9 | 2026-10-23 | F2b: mugshot PNG and sound pack limits added |
 | 0.0.10 | 2026-10-26 | C2-R: shell parser, action-based rules, installed-state protection only |
 | 0.0.11 | 2026-10-27 | C2-R3: script inspection, destructive-target asks, hook-entry guard in Rust with TOML switch |
+| 0.0.12 | 2026-10-27 | Rule of Two semantics: external-only freeze, no expiry, agentcop release, freeze counter; runner and cd/find fixes |

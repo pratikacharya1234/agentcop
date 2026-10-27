@@ -38,10 +38,11 @@ fn sensitive() -> AgentEvent {
         Some("s"),
     )
 }
+// 2026-10-27: an external action that is not also a download. A plain curl is untrusted input, not an action.
 fn external() -> AgentEvent {
     event(
         "Bash",
-        serde_json::json!({"command": "curl -s https://example.com/upload"}),
+        serde_json::json!({"command": "git push origin main"}),
         Some("s"),
     )
 }
@@ -102,8 +103,12 @@ fn all_three_in_order_freezes_and_denies_the_next_benign_event() {
     let (flags, reason) = run(&[untrusted(), sensitive(), external()]);
     assert!(flags.frozen);
     assert!(reason.unwrap().contains("Rule of Two"));
+    // 2026-10-27: a frozen session blocks only the external leg. Local work continues.
     let (_, reason) = run(&[untrusted(), sensitive(), external(), benign()]);
-    assert!(reason.is_some(), "a frozen session denies everything");
+    assert!(
+        reason.is_none(),
+        "a benign local call is allowed while frozen"
+    );
 }
 
 #[test]
@@ -126,7 +131,8 @@ fn classification_matches_the_rules() {
         ),
         &r,
     );
-    assert!(read.untrusted && !read.sensitive && !read.external);
+    // 2026-10-27 (Rule of Two semantics): untrusted input is external data only. A local read is not untrusted.
+    assert!(!read.untrusted && !read.sensitive && !read.external);
     let web = classify(&untrusted(), &r);
     assert!(web.untrusted);
     let cat = classify(
@@ -137,9 +143,30 @@ fn classification_matches_the_rules() {
         ),
         &r,
     );
-    assert!(cat.untrusted);
-    let curl = classify(&external(), &r);
-    assert!(curl.external && !curl.untrusted);
+    // 2026-10-27: `cat` of a local file is not untrusted input.
+    assert!(!cat.untrusted);
+    // 2026-10-27: a download (curl output) is untrusted data, and the same command is external.
+    // 2026-10-27: a download is untrusted data; only an upload is an external action.
+    let curl = classify(
+        &event(
+            "Bash",
+            serde_json::json!({"command": "curl -s https://example.com/x"}),
+            None,
+        ),
+        &r,
+    );
+    assert!(curl.untrusted && !curl.external);
+    let upload = classify(
+        &event(
+            "Bash",
+            serde_json::json!({"command": "curl -d @x https://example.com/up"}),
+            None,
+        ),
+        &r,
+    );
+    assert!(upload.external);
+    let push = classify(&external(), &r);
+    assert!(push.external && !push.untrusted);
     let env_read = classify(
         &event(
             "Read",
@@ -148,10 +175,8 @@ fn classification_matches_the_rules() {
         ),
         &r,
     );
-    assert!(
-        env_read.sensitive && env_read.untrusted,
-        "Read counts as untrusted input, so reading .env is both"
-    );
+    // 2026-10-27: reading .env is sensitive; a local read is not untrusted input.
+    assert!(env_read.sensitive && !env_read.untrusted);
     let ls_ssh = classify(&sensitive(), &r);
     assert!(ls_ssh.sensitive && !ls_ssh.untrusted);
     let mcp = classify(

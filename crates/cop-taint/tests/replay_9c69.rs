@@ -47,7 +47,13 @@ fn replay_of_session_9c69_triggers_no_freeze() {
 #[test]
 fn real_secret_read_then_push_still_freezes() {
     let rules = rules();
-    let (flags, _) = step(Flags::default(), &bash("cat .env.local"), &rules);
+    // 2026-10-27: untrusted input is a download. A local cat of .env.local is sensitive, not untrusted.
+    let (flags, _) = step(
+        Flags::default(),
+        &bash("curl -s https://docs.example.com/x"),
+        &rules,
+    );
+    let (flags, _) = step(flags, &bash("cat .env.local"), &rules);
     assert!(flags.untrusted && flags.sensitive && !flags.external);
     let (flags, reason) = step(flags, &bash("git push origin main"), &rules);
     assert!(flags.frozen, "expected a freeze");

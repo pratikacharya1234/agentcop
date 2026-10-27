@@ -119,6 +119,20 @@ scope = "bash"
 verdict = "ask"
 reason = "Cannot tell statically what this command runs"
 
+# find -delete: the target is find's start path. `find . -name '*.log' -delete` is allowed.
+# The root or the home directory is denied; another absolute path, or a path outside the project, asks.
+[[rules]]
+pattern = '^find-delete (?:/|~/?)$'
+scope = "bash"
+verdict = "deny"
+reason = "Deleting from the root or the home directory"
+
+[[rules]]
+pattern = '^find-delete (?:/|~|\.\.)'
+scope = "bash"
+verdict = "ask"
+reason = "Deleting outside the project directory"
+
 # Inline code (python -c, node -e, perl -e, sqlite3, sh script) that names protected state: deny.
 # Code that does not name protected state stays allowed; that is a known limit (see THREAT_MODEL).
 [[rules]]

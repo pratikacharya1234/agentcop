@@ -13,7 +13,7 @@ use cop_core::{AgentEvent, Case, Verdict};
 use cop_evidence::EvidenceStore;
 use cop_policy::{Judge, Mode, Policy};
 use cop_siren::{SoundEvent, SoundPlayer};
-use cop_taint::{step, SessionStore, TaintRules};
+use cop_taint::{classify_with, step, SessionStore, TaintRules};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read};
@@ -163,29 +163,55 @@ fn run() -> Result<(), String> {
         .read_to_string(&mut stdin_data)
         .map_err(|e| format!("Failed to read stdin: {}", e))?;
 
-    // Parse as AgentEvent
-    let event: AgentEvent =
+    // Parse as AgentEvent. Claude Code sends the working directory as `cwd`; it is kept in the context.
+    let mut event: AgentEvent =
         serde_json::from_str(&stdin_data).map_err(|e| format!("Failed to parse event: {}", e))?;
+    let raw: serde_json::Value = serde_json::from_str(&stdin_data).unwrap_or_default();
+    if let Some(cwd) = raw["cwd"].as_str() {
+        event.context.insert(
+            "cwd".to_string(),
+            serde_json::Value::String(cwd.to_string()),
+        );
+    }
+    let hook_event_name = event.hook_event_name.clone();
 
-    // Rule of Two: per-session taint. Load, step, save. Any error here is a deny (the ? returns Err to main).
-    // The flags are recorded even when the judge would deny the event, because the attempt still happened.
+    // Rule of Two: per-session state. Load, step, save. Any error here is a deny (the ? returns Err to main).
     let taint = load_taint_rules()?;
     let sessions = SessionStore {
         dir: evidence_dir.join("sessions"),
     };
-    let session = event.session_id.as_deref();
+    let session_id = event.session_id.clone();
+    let session = session_id.as_deref();
     let before = sessions.load(session)?;
-    let (after, taint_reason) = step(before.clone(), &event, &taint);
-    sessions.save(session, after)?;
+    let now = classify_with(&event, &taint, &before.foreign);
+    let (mut after, trigger) = step(before.clone(), &event, &taint);
 
-    // Judge the event. The stricter verdict wins; taint can only add a deny.
-    let (verdict, reason) = match taint_reason {
-        Some(reason) => (Verdict::Deny, reason),
-        None => judge.judge_in_session(&event, &before.written),
+    // A frozen session blocks only external actions. Each block adds to the freeze's counter; it writes no row.
+    let blocked_now = before.frozen && now.external;
+    let (verdict, reason, record) = if blocked_now {
+        let freeze = after.freeze.get_or_insert_with(Default::default);
+        freeze.blocked += 1;
+        let reason = format!(
+            "Session frozen by Rule of Two (trigger {}). External action blocked; {} blocked so far. `agentcop release {}` ends the freeze.",
+            freeze.case,
+            freeze.blocked,
+            session.unwrap_or("unknown")
+        );
+        (Verdict::Deny, reason, false)
+    } else {
+        let (verdict, reason) = match &trigger {
+            // The event that completes the three properties: an external one is denied outright.
+            Some(t) if now.external => (Verdict::Deny, t.clone()),
+            Some(t) => {
+                let (v, r) = judge.judge_in_session(&event, &before.written);
+                (v, format!("{t}; {r}"))
+            }
+            None => judge.judge_in_session(&event, &before.written),
+        };
+        (verdict, reason, true)
     };
 
-    // Create case and append to evidence store
-    // In log-only mode the evidence keeps the real verdict, marked, and the output allows.
+    // Log-only: the evidence keeps the real verdict, marked, and the output allows.
     let would_block = log_only && verdict != Verdict::Allow;
     let stored_reason = if would_block {
         format!("[log-only] {}", reason)
@@ -204,27 +230,44 @@ fn run() -> Result<(), String> {
     } else {
         (verdict, reason)
     };
-    let case = Case {
-        event,
-        verdict,
-        evidence_hash: None,
-        reason: Some(stored_reason),
+
+    // One evidence row per judged call. A blocked frozen call adds none (the counter has it).
+    let case_name = if record {
+        let case = Case {
+            event,
+            verdict,
+            evidence_hash: None,
+            reason: Some(stored_reason),
+        };
+        let row_id = store
+            .append(&case)
+            .map_err(|e| format!("Failed to append to evidence: {}", e))?;
+        let hash = store
+            .hash_for(row_id)
+            .map_err(|e| format!("Failed to read case hash: {}", e))?;
+        let name = format!("CASE-{}", &hash[..12]);
+        if trigger.is_some() {
+            if let Some(freeze) = after.freeze.as_mut() {
+                freeze.case = name.clone();
+            }
+        }
+        name
+    } else {
+        after
+            .freeze
+            .as_ref()
+            .map(|f| f.case.clone())
+            .unwrap_or_default()
     };
-    let row_id = store
-        .append(&case)
-        .map_err(|e| format!("Failed to append to evidence: {}", e))?;
-    // Name the case in the reason, so a person can find it with `agentcop cases` and `agentcop fix`.
-    let hash = store
-        .hash_for(row_id)
-        .map_err(|e| format!("Failed to read case hash: {}", e))?;
-    let reason_with_case = format!("{} [CASE-{}]", reason_out, &hash[..12]);
+    sessions.save(session, after)?;
+    let reason_with_case = format!("{} [{}]", reason_out, case_name);
 
     // Output verdict JSON (before playing sound, so it returns immediately)
     let verdict_str = verdict_word(verdict_out);
 
     let response = HookResponse {
         hook_specific_output: VerdictOutput {
-            hook_event_name: case.event.hook_event_name.clone(),
+            hook_event_name: hook_event_name.clone(),
             permission_decision: verdict_str.to_string(),
             permission_decision_reason: reason_with_case,
         },

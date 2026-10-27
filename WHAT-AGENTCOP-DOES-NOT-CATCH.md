@@ -42,3 +42,8 @@ DRAFT for owner review. Not published. This page lists what AgentCop misses toda
 ## Scope of the tests
 - The attack corpus has 36 hook cases and 3 detective cases. A passing run is not proof that the policy is complete.
 - The Python starter test suite from an earlier phase (27 cases) was not ported.
+
+## Rule of Two
+- **Plain downloads are not external actions.** `curl URL` and WebFetch do not freeze a session by themselves. A secret that leaves in a URL query (a GET) is not caught by the freeze.
+- **Freezes need a person.** A frozen session stays frozen until `agentcop release <session>`. The release is logged, but nothing reminds anyone to run it.
+- **Repos that were already there.** Untrusted input is tracked only for repos the session cloned.

@@ -170,8 +170,14 @@ impl Judge {
                 &searchable,
             )
             .unwrap_or_else(no_rules);
+        let cwd = cop_core::event_cwd(event);
         for (_, child, child_maybe) in scripts::script_calls(&analysis.actions) {
-            if let Some(hit) = self.inspect_script(child, child_maybe, 1, written) {
+            if let Some(hit) = self.inspect_script(child, child_maybe, 1, written, &cwd) {
+                result = keep_stricter(result, hit);
+            }
+        }
+        for (_, file) in scripts::runs_file_calls(&analysis.actions) {
+            if let Some(hit) = self.runs_file_verdict(file, &cwd, written) {
                 result = keep_stricter(result, hit);
             }
         }

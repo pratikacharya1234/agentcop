@@ -230,3 +230,49 @@ fn plain_pipeline_is_not_uncertain() {
     let a = analyze("ls | grep foo");
     assert!(!uncertain(&a), "{:?}", a.actions);
 }
+
+// 2026-10-27 (Rule of Two semantics, C2-R3 open items). A run-time `cd` makes later relative paths unknown.
+#[test]
+fn cd_to_a_variable_makes_the_directory_unknown() {
+    let a = analyze("cd $X && bash x.sh");
+    assert!(uncertain(&a), "{:?}", a.actions);
+}
+
+#[test]
+fn cd_to_a_literal_resolves_the_script_path() {
+    let a = analyze("cd sub && bash x.sh");
+    assert!(has(&a, "script sub/x.sh"), "{:?}", a.actions);
+}
+
+// A runner executes a file: python, node, ruby, perl, make, npm run, npx, cargo run of build.rs.
+#[test]
+fn python_file_argument_is_a_runs_file_line() {
+    let a = analyze("python3 new_tool.py");
+    assert!(has(&a, "runs-file new_tool.py"), "{:?}", a.actions);
+}
+
+#[test]
+fn npm_run_names_package_json() {
+    let a = analyze("npm run build");
+    assert!(has(&a, "runs-file package.json"), "{:?}", a.actions);
+}
+
+#[test]
+fn cargo_run_names_build_rs() {
+    let a = analyze("cargo run");
+    assert!(has(&a, "runs-file build.rs"), "{:?}", a.actions);
+}
+
+// find: a quoted pattern is not a glob; the target is the start path.
+#[test]
+fn find_delete_names_the_start_path() {
+    let a = analyze("find . -name '*.log' -delete");
+    assert!(has(&a, "find-delete ."), "{:?}", a.actions);
+    assert!(!uncertain(&a), "{:?}", a.actions);
+}
+
+#[test]
+fn find_delete_from_root_names_root() {
+    let a = analyze("find / -delete");
+    assert!(has(&a, "find-delete /"), "{:?}", a.actions);
+}

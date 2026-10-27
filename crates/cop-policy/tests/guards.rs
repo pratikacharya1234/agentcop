@@ -316,8 +316,12 @@ fn git_clean_with_variable_asks() {
 }
 
 #[test]
-fn find_delete_with_glob_asks() {
-    assert_eq!(verdict(&bash("find . -name '*.log' -delete")), Verdict::Ask);
+fn find_delete_with_quoted_pattern_in_project_is_allowed() {
+    // 2026-10-27: a quoted pattern is a find pattern, not a shell glob. The target is `.`, inside the project.
+    assert_eq!(
+        verdict(&bash("find . -name '*.log' -delete")),
+        Verdict::Allow
+    );
 }
 
 // C2-R3 item 4. The hook-entry guard's switch and protected files come from TOML.
