@@ -17,6 +17,7 @@ members = [
   "crates/cop-family",
   "crates/cop-syscalls",
   "crates/cop-egress",
+  "crates/cop-holding",
 ]
 
 [workspace.package]
