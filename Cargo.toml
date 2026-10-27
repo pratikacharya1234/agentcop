@@ -9,6 +9,7 @@ members = [
   "crates/cop-siren",
   "crates/cop-logger",
   "crates/cop-normalizer",
+  "crates/cop-codex",
 ]
 
 [workspace.package]
