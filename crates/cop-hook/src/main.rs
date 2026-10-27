@@ -19,11 +19,19 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
-struct HookResponse {
+struct VerdictOutput {
+    #[serde(rename = "hookEventName")]
+    hook_event_name: String,
     #[serde(rename = "permissionDecision")]
     permission_decision: String,
     #[serde(rename = "permissionDecisionReason")]
     permission_decision_reason: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HookResponse {
+    #[serde(rename = "hookSpecificOutput")]
+    hook_specific_output: VerdictOutput,
 }
 
 fn main() {
@@ -31,8 +39,11 @@ fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {}", e);
         let response = HookResponse {
-            permission_decision: "deny".to_string(),
-            permission_decision_reason: format!("Internal error: {}", e),
+            hook_specific_output: VerdictOutput {
+                hook_event_name: "PreToolUse".to_string(),
+                permission_decision: "deny".to_string(),
+                permission_decision_reason: format!("Internal error: {}", e),
+            },
         };
         let _ = serde_json::to_writer(io::stdout(), &response);
         std::process::exit(2);
@@ -104,8 +115,11 @@ fn run() -> Result<(), String> {
     };
 
     let response = HookResponse {
-        permission_decision: verdict_str.to_string(),
-        permission_decision_reason: case.reason.unwrap_or_default(),
+        hook_specific_output: VerdictOutput {
+            hook_event_name: case.event.hook_event_name.clone(),
+            permission_decision: verdict_str.to_string(),
+            permission_decision_reason: case.reason.unwrap_or_default(),
+        },
     };
 
     serde_json::to_writer(io::stdout(), &response)
@@ -135,10 +149,14 @@ mod tests {
     #[test]
     fn can_create_hook_response() {
         let response = HookResponse {
-            permission_decision: "allow".to_string(),
-            permission_decision_reason: "Test".to_string(),
+            hook_specific_output: VerdictOutput {
+                hook_event_name: "PreToolUse".to_string(),
+                permission_decision: "allow".to_string(),
+                permission_decision_reason: "Test".to_string(),
+            },
         };
         let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("hookSpecificOutput"));
         assert!(json.contains("permissionDecision"));
         assert!(json.contains("allow"));
     }
@@ -146,8 +164,11 @@ mod tests {
     #[test]
     fn verdict_serializes_to_lowercase() {
         let allow_response = HookResponse {
-            permission_decision: "allow".to_string(),
-            permission_decision_reason: String::new(),
+            hook_specific_output: VerdictOutput {
+                hook_event_name: "PreToolUse".to_string(),
+                permission_decision: "allow".to_string(),
+                permission_decision_reason: String::new(),
+            },
         };
         let json = serde_json::to_string(&allow_response).unwrap();
         assert!(json.contains("\"allow\""));

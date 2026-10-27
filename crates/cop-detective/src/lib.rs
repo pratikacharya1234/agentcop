@@ -323,7 +323,7 @@ mod tests {
 
     fn create_test_case(verdict: Verdict) -> CaseFile {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T16:00:00Z".to_string(),
             session_id: Some("test".to_string()),
             user_id: None,

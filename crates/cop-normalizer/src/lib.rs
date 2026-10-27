@@ -39,7 +39,7 @@ impl Normalizer {
     /// Parse PreToolUse hook JSON (what cop-hook produces)
     fn parse_pretooluse(value: &Value) -> Result<AgentEvent, String> {
         Ok(AgentEvent {
-            hook_type: value
+            hook_event_name: value
                 .get("hook_type")
                 .and_then(|v| v.as_str())
                 .unwrap_or("PreToolUse")
@@ -85,7 +85,7 @@ impl Normalizer {
             .unwrap_or(json!([]));
 
         Ok(AgentEvent {
-            hook_type: "Syscall".to_string(),
+            hook_event_name: "Syscall".to_string(),
             timestamp: value
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -118,7 +118,7 @@ impl Normalizer {
         let path = value.get("path").and_then(|v| v.as_str()).unwrap_or("/");
 
         Ok(AgentEvent {
-            hook_type: "Proxy".to_string(),
+            hook_event_name: "Proxy".to_string(),
             timestamp: value
                 .get("timestamp")
                 .and_then(|v| v.as_str())
@@ -160,7 +160,7 @@ mod tests {
         }"#;
 
         let event = Normalizer::from_json(json).expect("Parse failed");
-        assert_eq!(event.hook_type, "PreToolUse");
+        assert_eq!(event.hook_event_name, "PreToolUse");
         assert_eq!(event.tool_name, "bash");
         assert!(event.tool_input.get("command").is_some());
     }
@@ -175,7 +175,7 @@ mod tests {
         }"#;
 
         let event = Normalizer::from_json(json).expect("Parse failed");
-        assert_eq!(event.hook_type, "Syscall");
+        assert_eq!(event.hook_event_name, "Syscall");
         assert_eq!(event.tool_name, "execve");
         assert_eq!(event.user_id, Some("1000".to_string()));
     }
@@ -190,7 +190,7 @@ mod tests {
         }"#;
 
         let event = Normalizer::from_json(json).expect("Parse failed");
-        assert_eq!(event.hook_type, "Proxy");
+        assert_eq!(event.hook_event_name, "Proxy");
         assert!(event.tool_name.contains("POST"));
         assert!(event.tool_name.contains("/api/agent/execute"));
     }

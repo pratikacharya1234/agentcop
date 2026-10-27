@@ -14,7 +14,9 @@ use std::collections::HashMap;
 /// A single action an agent attempted (what they said they would do)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentEvent {
-    pub hook_type: String,
+    #[serde(alias = "hook_type")]
+    pub hook_event_name: String,
+    #[serde(default)]
     pub timestamp: String,
     pub session_id: Option<String>,
     pub user_id: Option<String>,

@@ -31,7 +31,7 @@ impl ExecEvent {
         let full_command = format!("{} {}", self.command, args_str);
 
         AgentEvent {
-            hook_type: "eBPF".to_string(),
+            hook_event_name: "eBPF".to_string(),
             timestamp: self.timestamp.clone(),
             session_id: Some(format!("pid-{}", self.pid)),
             user_id: Some(format!("uid-{}", self.uid)),
@@ -181,7 +181,7 @@ mod tests {
         };
 
         let agent_event = event.to_agent_event();
-        assert_eq!(agent_event.hook_type, "eBPF");
+        assert_eq!(agent_event.hook_event_name, "eBPF");
         assert_eq!(agent_event.tool_name, "execve");
         assert_eq!(agent_event.session_id, Some("pid-1234".to_string()));
         assert_eq!(agent_event.user_id, Some("uid-1000".to_string()));

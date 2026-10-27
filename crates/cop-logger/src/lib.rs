@@ -117,7 +117,7 @@ mod tests {
     fn sample_case() -> Case {
         Case {
             event: AgentEvent {
-                hook_type: "PreToolUse".to_string(),
+                hook_event_name: "PreToolUse".to_string(),
                 timestamp: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
                 session_id: Some("s123".to_string()),
                 user_id: Some("u123".to_string()),

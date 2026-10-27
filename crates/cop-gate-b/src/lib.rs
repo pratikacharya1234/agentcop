@@ -176,7 +176,7 @@ impl IntegrationScenarios {
     /// Benign request: fast allow path
     pub fn benign_workflow() -> IntegrationWorkflow {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("session_001".to_string()),
             user_id: Some("user@example.com".to_string()),
@@ -197,7 +197,7 @@ impl IntegrationScenarios {
     /// Suspicious request: deny path
     pub fn suspicious_workflow() -> IntegrationWorkflow {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("session_001".to_string()),
             user_id: Some("user@example.com".to_string()),
@@ -218,7 +218,7 @@ impl IntegrationScenarios {
     /// Ambiguous request: ask path with approval needed
     pub fn ambiguous_workflow() -> IntegrationWorkflow {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("session_001".to_string()),
             user_id: Some("user@example.com".to_string()),
@@ -239,7 +239,7 @@ impl IntegrationScenarios {
     /// Privilege escalation detection
     pub fn privilege_escalation_workflow() -> IntegrationWorkflow {
         let event = AgentEvent {
-            hook_type: "PostToolUse".to_string(),
+            hook_event_name: "PostToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("session_001".to_string()),
             user_id: Some("user@example.com".to_string()),
@@ -260,7 +260,7 @@ impl IntegrationScenarios {
     /// Data exfiltration detection
     pub fn data_exfiltration_workflow() -> IntegrationWorkflow {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("session_002".to_string()),
             user_id: Some("attacker@example.com".to_string()),
@@ -431,7 +431,7 @@ mod tests {
     fn test_event_preservation() {
         let workflow = IntegrationScenarios::benign_workflow();
         assert_eq!(workflow.event.tool_name, "ls");
-        assert_eq!(workflow.event.hook_type, "PreToolUse");
+        assert_eq!(workflow.event.hook_event_name, "PreToolUse");
         assert!(workflow.event.user_id.is_some());
     }
 

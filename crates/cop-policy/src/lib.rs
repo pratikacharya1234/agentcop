@@ -183,7 +183,7 @@ mod tests {
     fn allows_benign_command() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -200,7 +200,7 @@ mod tests {
     fn denies_rm_rf_root() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -218,7 +218,7 @@ mod tests {
     fn denies_prod_delete() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -235,7 +235,7 @@ mod tests {
     fn denies_env_file_access() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -252,7 +252,7 @@ mod tests {
     fn denies_curl_pipe_sh() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -269,7 +269,7 @@ mod tests {
     fn asks_before_git_push() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -304,7 +304,7 @@ mod tests {
 
         let judge = Judge::new(policy).expect("Failed to create judge");
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -321,7 +321,7 @@ mod tests {
     fn honeytoken_triggers() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -351,7 +351,7 @@ mod tests {
 
         // Test with bash tool (should match scope)
         let event_bash = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -365,7 +365,7 @@ mod tests {
 
         // Test with different tool (should not match scope)
         let event_other = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -382,7 +382,7 @@ mod tests {
     fn benchmark_judge_speed() {
         let judge = create_test_judge();
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T00:00:00Z".to_string(),
             session_id: None,
             user_id: None,

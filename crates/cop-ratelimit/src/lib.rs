@@ -164,7 +164,7 @@ mod tests {
 
     fn sample_event(tool: &str) -> AgentEvent {
         AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T10:00:00Z".to_string(),
             session_id: Some("s123".to_string()),
             user_id: Some("u456".to_string()),

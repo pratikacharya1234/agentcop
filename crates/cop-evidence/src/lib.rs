@@ -168,7 +168,7 @@ mod tests {
     fn create_test_case(verdict: Verdict, reason: &str) -> Case {
         Case {
             event: AgentEvent {
-                hook_type: "PreToolUse".to_string(),
+                hook_event_name: "PreToolUse".to_string(),
                 timestamp: "2026-10-20T00:00:00Z".to_string(),
                 session_id: None,
                 user_id: None,
@@ -252,7 +252,7 @@ mod tests {
 
         let case_allow = Case {
             event: AgentEvent {
-                hook_type: "PreToolUse".to_string(),
+                hook_event_name: "PreToolUse".to_string(),
                 timestamp: "2026-10-20T00:00:00Z".to_string(),
                 session_id: None,
                 user_id: None,

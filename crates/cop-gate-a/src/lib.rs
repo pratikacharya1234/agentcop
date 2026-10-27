@@ -174,7 +174,7 @@ impl DemoScenarios {
     /// Create a basic allow scenario
     pub fn benign_request() -> IntegrationScenario {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("demo_session".to_string()),
             user_id: Some("demo_user".to_string()),
@@ -200,7 +200,7 @@ impl DemoScenarios {
     /// Create a suspicious request scenario
     pub fn suspicious_request() -> IntegrationScenario {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("demo_session".to_string()),
             user_id: Some("demo_user".to_string()),
@@ -226,7 +226,7 @@ impl DemoScenarios {
     /// Create an ask scenario
     pub fn ambiguous_request() -> IntegrationScenario {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: Some("demo_session".to_string()),
             user_id: Some("demo_user".to_string()),
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn test_scenario_creation() {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -275,7 +275,7 @@ mod tests {
     #[test]
     fn test_scenario_steps() {
         let event = AgentEvent {
-            hook_type: "PreToolUse".to_string(),
+            hook_event_name: "PreToolUse".to_string(),
             timestamp: "2026-10-20T21:00:00Z".to_string(),
             session_id: None,
             user_id: None,
@@ -385,7 +385,7 @@ mod tests {
     fn test_event_structure_preserved() {
         let scenario = DemoScenarios::benign_request();
         assert_eq!(scenario.input_event.tool_name, "ls");
-        assert_eq!(scenario.input_event.hook_type, "PreToolUse");
+        assert_eq!(scenario.input_event.hook_event_name, "PreToolUse");
     }
 
     #[test]
