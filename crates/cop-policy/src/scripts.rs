@@ -75,6 +75,16 @@ impl Judge {
             return Some((Verdict::Ask, why));
         }
         let abs = cop_core::absolute_path(raw, cwd);
+        // FP-1: an unchanged, tracked script runs as it would with no secret read. Only the "after a secret read"
+        // asks are dropped. Its denies and its other asks still apply.
+        let session = if unchanged_since_session_start(&abs, &session) {
+            SessionView {
+                sensitive: false,
+                ..session
+            }
+        } else {
+            session
+        };
         let text = match read_script(Path::new(&abs), maybe) {
             Ok(None) => return None,
             Ok(Some(text)) => text,
@@ -113,6 +123,45 @@ impl Judge {
         }
         Some(result)
     }
+}
+
+/// FP-1 trust rule. A script is unchanged when all of these hold: it is tracked in git, it matches HEAD, the agent
+/// did not write it this session, and its mtime is before the session's SessionStart heartbeat. Anything else
+/// (untracked, modified, no heartbeat for the session) is not trusted.
+pub(crate) fn unchanged_since_session_start(abs: &str, session: &SessionView<'_>) -> bool {
+    let Some(started) = session.started else {
+        return false;
+    };
+    if session.written.iter().any(|w| w == abs) {
+        return false;
+    }
+    let path = Path::new(abs);
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return false;
+    };
+    let mtime = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    if !mtime.is_some_and(|m| m < started) {
+        return false;
+    }
+    git_ok(dir, &["ls-files", "--error-unmatch", "--"], name)
+        && git_ok(dir, &["diff", "--quiet", "HEAD", "--"], name)
+}
+
+/// True when `git <args> <name>` run in `dir` exits 0. A missing git or no repo is false (not trusted).
+fn git_ok(dir: &Path, args: &[&str], name: &std::ffi::OsStr) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .arg(name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Read a script. Ok(None) only for a `maybe` path that is not a shell script.

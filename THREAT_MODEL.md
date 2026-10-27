@@ -100,3 +100,4 @@
 | 0.0.14 | 2026-10-27 | Item 3: redaction before storage (built-in patterns), HMAC of raw input, legacy archive and anchored chain, explicit 0700/0600 permissions, install copies the hook |
 | 0.0.15 | 2026-10-27 | Item 4: policy canaries, agentcop doctor, SessionStart heartbeat, clean uninstall |
 | 0.0.16 | 2026-10-26 | Item 4b: when the live policy fails a canary, the hook runs the last-known-good copy, else the built-in defaults; never an empty policy |
+| 0.0.17 | 2026-10-26 | FP-1: secret files by name (`.env`, keys, credentials, `hmac.key`), not regex over text; an unchanged tracked script may run after a secret read; `@file` uploads count; broken pipe exits quietly |

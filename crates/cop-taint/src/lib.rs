@@ -41,6 +41,10 @@ pub struct Flags {
     /// The record of the freeze, when frozen.
     #[serde(default)]
     pub freeze: Option<Freeze>,
+    /// Unix seconds of the session's latest SessionStart heartbeat (FP-1). A script not changed since then may run
+    /// after a secret read. None until the hook has seen a SessionStart for this session.
+    #[serde(default)]
+    pub started: Option<u64>,
 }
 
 /// One freeze: its trigger, the evidence record that names it, and how many external calls it blocked.
@@ -67,7 +71,6 @@ struct RulesFile {
     untrusted_bash: Vec<String>,
     #[serde(default)]
     network_commands: Vec<String>,
-    sensitive: Vec<String>,
     #[serde(default)]
     sensitive_content: Vec<String>,
     external: Vec<String>,
@@ -82,7 +85,6 @@ pub struct TaintRules {
     mcp_send_patterns: Vec<Regex>,
     read_tools: Vec<String>,
     untrusted_bash: Vec<Regex>,
-    sensitive: Vec<Regex>,
     sensitive_content: Vec<Regex>,
     external: Vec<Regex>,
 }
@@ -90,10 +92,8 @@ pub struct TaintRules {
 impl TaintRules {
     pub fn from_toml(text: &str) -> Result<Self, String> {
         let file: RulesFile = toml::from_str(text).map_err(|e| format!("bad taint rules: {e}"))?;
-        if file.sensitive.is_empty() || file.external.is_empty() {
-            return Err(
-                "taint rules need sensitive and external patterns; refusing to start".to_string(),
-            );
+        if file.external.is_empty() {
+            return Err("taint rules need external patterns; refusing to start".to_string());
         }
         Ok(Self {
             untrusted_tools: file.untrusted_tools,
@@ -103,7 +103,6 @@ impl TaintRules {
             read_tools: file.read_tools,
             network_commands: file.network_commands,
             untrusted_bash: compile(&file.untrusted_bash)?,
-            sensitive: compile(&file.sensitive)?,
             sensitive_content: compile(&file.sensitive_content)?,
             external: compile(&file.external)?,
         })
@@ -148,7 +147,8 @@ fn classify_tool(event: &AgentEvent, rules: &TaintRules, session: &Flags, cwd: &
     let reads_foreign = in_list(&rules.read_tools)
         && path_field(event).is_some_and(|p| under_any(&cop_core::absolute_path(p, cwd), foreign));
     let untrusted = is_mcp || in_list(&rules.untrusted_tools) || reads_foreign;
-    let sensitive = rules.sensitive.iter().any(|re| re.is_match(&text))
+    // A secret is a file by name (FP-1). Text in a tool's content or search pattern is not a file.
+    let sensitive = path_field(event).is_some_and(cop_shell::is_secret_path)
         || rules.sensitive_content.iter().any(|re| re.is_match(&text));
     // A secret in the session, or in this call, makes any way of sending it out an external action:
     // web requests (the URL carries the data) and MCP tools that send, post or write.
@@ -221,7 +221,10 @@ fn classify_bash(
         .map(|p| cop_core::absolute_path(p, cwd))
         .collect();
     let foreign_new = clone_dirs(&analysis.actions, cwd);
-    let sensitive = content || rules.sensitive.iter().any(|re| re.is_match(&actions));
+    let sensitive = content
+        || cop_shell::file_operands(&analysis.actions)
+            .iter()
+            .any(|f| cop_shell::is_secret_path(f));
     // Once the session has touched sensitive data, every outbound request is an external action,
     // a plain GET included: the data can leave in the URL.
     let network = (session_sensitive || sensitive)

@@ -254,8 +254,10 @@ fn a_session_id_is_a_text_key_not_a_path() {
     assert_eq!(entries.len(), 1, "only the state file exists");
 }
 
+// FP-1 (2026-10-26): secret names are matched in code, so the `sensitive` list is gone. The guard that a
+// rules file must keep its external list (fail closed) is what remains of this test.
 #[test]
-fn empty_sensitive_list_is_refused() {
-    let text = "untrusted_tools = [\"Read\"]\nsensitive = []\nexternal = [\"curl\"]\n";
+fn empty_external_list_is_refused() {
+    let text = "untrusted_tools = [\"Read\"]\nexternal = []\n";
     assert!(TaintRules::from_toml(text).is_err());
 }

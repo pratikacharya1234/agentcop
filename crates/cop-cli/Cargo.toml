@@ -15,6 +15,7 @@ cop-policy = { path = "../cop-policy" }
 cop-evidence = { path = "../cop-evidence" }
 cop-taint = { path = "../cop-taint" }
 chrono = "0.4"
+libc = "0.2"
 clap = { version = "4.4", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 dirs = "5.0"

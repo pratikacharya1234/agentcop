@@ -92,6 +92,7 @@ pub fn run_canaries(judge: &Judge) -> Vec<CanaryResult> {
                 SessionView {
                     written: &[],
                     sensitive: false,
+                    started: None,
                 },
             );
             CanaryResult {

@@ -10,6 +10,10 @@
 //! 6. `bash -c`, `sh -c` and `eval` strings are parsed again as commands (depth-limited).
 //! 7. A parse error or too-deep nesting sets `unparsed`. The judge denies on that (fail closed).
 
+mod secret;
+
+pub use secret::{file_operands, is_secret_path};
+
 use tree_sitter::{Node, Parser};
 
 /// How deep `bash -c` nesting may go before we give up (fail closed).
@@ -165,6 +169,9 @@ impl Walker<'_> {
         let argv = self.argv(node);
         if !argv.is_empty() {
             self.emit(format!("exec {}", argv.join(" ")));
+            for operand in secret::command_operands(&argv) {
+                self.emit(format!("operand {operand}"));
+            }
             self.judge_name(node, &argv);
             self.script_target(&argv);
             self.runner_target(&argv);

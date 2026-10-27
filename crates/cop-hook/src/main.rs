@@ -216,6 +216,7 @@ fn run() -> Result<(), String> {
     if let Ok(start) = serde_json::from_str::<serde_json::Value>(&stdin_data) {
         if start["hook_event_name"].as_str() == Some("SessionStart") {
             record_heartbeat(&store, &hmac_key, &start);
+            record_session_start(&evidence_dir, &start);
             return Ok(());
         }
     }
@@ -353,11 +354,31 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
-/// What the judge may see of the session: written files, and whether a secret is held (before or in this call).
+/// What the judge may see of the session: written files, whether a secret is held (before or in this call), and
+/// when the session started (FP-1: an unchanged script may run after a secret read).
 fn session_view(before: &cop_taint::Flags, now_sensitive: bool) -> cop_policy::SessionView<'_> {
     cop_policy::SessionView {
         written: &before.written,
         sensitive: before.sensitive || now_sensitive,
+        started: before.started,
+    }
+}
+
+/// Remember when this session's SessionStart happened (FP-1). A failure is printed, never fatal: the heartbeat
+/// never blocks a session. Without it, scripts after a secret read ask.
+fn record_session_start(state_dir: &std::path::Path, start: &serde_json::Value) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let result = SessionStore::open(&state_dir.join("state.db")).and_then(|sessions| {
+        sessions.update(start["session_id"].as_str(), |mut flags| {
+            flags.started = Some(now);
+            Ok((flags, ()))
+        })
+    });
+    if let Err(e) = result {
+        eprintln!("heartbeat: could not record the session start time: {e}");
     }
 }
 

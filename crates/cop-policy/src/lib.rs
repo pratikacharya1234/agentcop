@@ -149,6 +149,8 @@ impl Default for HookGuard {
 pub struct SessionView<'a> {
     pub written: &'a [String],
     pub sensitive: bool,
+    /// Unix seconds of the session's latest SessionStart (FP-1). None when the hook has seen none.
+    pub started: Option<u64>,
 }
 
 /// One compiled rule: (pattern, verdict, scope, reason, requires_secret).
@@ -196,6 +198,7 @@ impl Judge {
             SessionView {
                 written: &[],
                 sensitive: false,
+                started: None,
             },
         )
     }
@@ -216,6 +219,9 @@ impl Judge {
         }
         if !event.tool_name.eq_ignore_ascii_case("bash") {
             if let Some(reason) = guard::hook_entry_change(&self.hook_guard, event, &[]) {
+                return (Verdict::Deny, reason.to_string());
+            }
+            if let Some(reason) = tool_secret_reason(event) {
                 return (Verdict::Deny, reason.to_string());
             }
             return self
@@ -263,6 +269,11 @@ impl Judge {
                 session.sensitive,
             )
             .unwrap_or_else(no_rules);
+        // A secret file operand or write target is denied by its name (FP-1), not by a regex over the text.
+        let operands = cop_shell::file_operands(&analysis.actions);
+        if let Some(path) = operands.iter().find(|p| cop_shell::is_secret_path(p)) {
+            result = keep_stricter(result, (Verdict::Deny, secret_reason(path).to_string()));
+        }
         let cwd = cop_core::event_cwd(event);
         for (_, child, child_maybe) in scripts::script_calls(&analysis.actions) {
             if let Some(hit) = self.inspect_script(child, child_maybe, 1, session, &cwd) {
@@ -339,6 +350,25 @@ impl Judge {
         }
         result
     }
+}
+
+/// The deny reason for a secret file: "Accessing SSH keys" under a .ssh folder, else the general reason.
+fn secret_reason(path: &str) -> &'static str {
+    if path.split('/').any(|part| part == ".ssh") {
+        "Accessing SSH keys"
+    } else {
+        "Reading or writing secrets file"
+    }
+}
+
+/// A file tool (Read, Write, Edit, Grep...) that names a secret file in `file_path` or `path` (FP-1). The text of
+/// its content or pattern is not looked at.
+fn tool_secret_reason(event: &AgentEvent) -> Option<&'static str> {
+    ["file_path", "path"]
+        .iter()
+        .filter_map(|key| event.tool_input[*key].as_str())
+        .find(|p| cop_shell::is_secret_path(p))
+        .map(secret_reason)
 }
 
 fn no_rules() -> (Verdict, String) {

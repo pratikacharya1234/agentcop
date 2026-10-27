@@ -23,31 +23,9 @@ pattern = "prod.*delete"
 verdict = "deny"
 reason = "Destructive action on production"
 
-# Secret files. Scoped to Bash: the judge matches what the command does (its executed words and
-# write targets), not text inside heredocs or quotes. `.env.local`, `.env.production` etc. match `\.env\b`.
-[[rules]]
-pattern = "\\.env\\b"
-scope = "bash"
-verdict = "deny"
-reason = "Reading or writing secrets file"
-
-[[rules]]
-pattern = "\\.ssh\\b"
-scope = "bash"
-verdict = "deny"
-reason = "Accessing SSH keys"
-
-# Other tools (Read, Edit, Write, ...) name the file in file_path. Only that field counts,
-# so text inside another tool's content does not trigger these rules.
-[[rules]]
-pattern = '"file_path":"[^"]*\.env\b'
-verdict = "deny"
-reason = "Reading or writing secrets file"
-
-[[rules]]
-pattern = '"file_path":"[^"]*\.ssh\b'
-verdict = "deny"
-reason = "Accessing SSH keys"
+# Secret files are denied in code, by file name (cop-shell secret.rs, FP-1 2026-10-26), for Bash operands,
+# write targets and the file_path of file tools. The reason is "Reading or writing secrets file", or
+# "Accessing SSH keys" for a path under .ssh. Text inside a pattern, a heredoc or a quote never matches.
 
 [[rules]]
 pattern = "AWS_SECRET|AZURE_KEY|GCP_KEY"

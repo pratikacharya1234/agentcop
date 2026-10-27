@@ -18,16 +18,8 @@ read_tools = ["Read", "Grep", "Glob"]
 network_commands = ["curl", "wget", "nc", "ncat", "ssh", "scp", "sftp", "rsync", "ftp", "dig", "nslookup", "host", "telnet"]
 # Bash commands that download (the output is data from outside) or clone a third-party repo.
 untrusted_bash = ['\b(curl|wget)\b', '\bgit\s+clone\b']
-# Matched against what a command does (its words and write targets), not against text in heredocs.
-sensitive = [
-  '\.env\b',
-  '\.ssh\b',
-  'id_rsa|id_ed25519',
-  '\.aws\b',
-  'credentials',
-  '/etc/shadow',
-  '\.netrc',
-]
+# Secret files are recognised by file name in code (cop-shell secret.rs, FP-1 2026-10-26): `.env`, `.env.*`,
+# `~/.ssh/*`, `~/.aws/credentials`, `id_rsa*`, `*.pem`, `hmac.key`. Regexes over text are not used for that.
 # Matched against the raw command: a secret-looking value is sensitive wherever it is written.
 sensitive_content = [
   'AKIA[0-9A-Z]{16}',

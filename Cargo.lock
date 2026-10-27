@@ -312,6 +312,7 @@ dependencies = [
  "cop-policy",
  "cop-taint",
  "dirs",
+ "libc",
  "regex",
  "rusqlite",
  "serde",

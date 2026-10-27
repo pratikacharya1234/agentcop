@@ -107,6 +107,12 @@ enum Commands {
 }
 
 fn main() {
+    // A pipe closed early (`agentcop cases | head -1`) should end the program quietly, as Unix tools do. Rust
+    // ignores SIGPIPE, which turns the closed pipe into a panic in println!. The default action is restored here.
+    // SAFETY: signal() only sets the disposition of SIGPIPE, and it runs first, before any thread exists.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     let cli = Cli::parse();
 
     if let Err(e) = run(cli) {
