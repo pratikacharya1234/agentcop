@@ -130,8 +130,13 @@ fn is_suspicious_addr(addr: &str) -> bool {
 
 fn is_suspicious_port(port: u16) -> bool {
     match port {
-        // Low-numbered privileged ports (requires root)
-        1..=1024 => true,
+        // Specific risky services (not all privileged ports - HTTPS on 443 is normal)
+        // SQL servers
+        1433 | 3306 | 5432 | 5984 => true, // MSSQL, MySQL, PostgreSQL, CouchDB
+        // Remote access / shells
+        22 | 3389 | 5900 => true, // SSH, RDP, VNC
+        // Database admin ports
+        6379 => true, // Redis
         // Common backdoor/C2 ports
         4444 | 5555 | 6666 | 7777 | 8888 | 9999 | 31337 | 40404 => true,
         _ => false,
@@ -452,5 +457,58 @@ mod tests {
         });
 
         assert!(map.attempted_suid_chmod(1234));
+    }
+
+    #[test]
+    fn test_benign_https_not_flagged() {
+        // BUG #7 FIX: HTTPS on 443 should NOT be flagged as suspicious
+        // Removed blanket "ports 1-1024" rule that caused false positives
+        assert!(
+            !super::is_suspicious_port(443),
+            "HTTPS on 443 should be benign"
+        );
+    }
+
+    #[test]
+    fn test_benign_dns_not_flagged() {
+        // DNS (53) should not be flagged as suspicious
+        assert!(!super::is_suspicious_port(53), "DNS on 53 should be benign");
+    }
+
+    #[test]
+    fn test_benign_ntp_not_flagged() {
+        // NTP (123) should not be flagged
+        assert!(
+            !super::is_suspicious_port(123),
+            "NTP on 123 should be benign"
+        );
+    }
+
+    #[test]
+    fn test_specific_risky_ports_still_flagged() {
+        // These specific services ARE suspicious and should still be flagged
+        assert!(
+            super::is_suspicious_port(3306),
+            "MySQL on 3306 should be suspicious"
+        );
+        assert!(
+            super::is_suspicious_port(5432),
+            "PostgreSQL on 5432 should be suspicious"
+        );
+        assert!(
+            super::is_suspicious_port(6379),
+            "Redis on 6379 should be suspicious"
+        );
+        assert!(
+            !super::is_suspicious_port(27017),
+            "MongoDB on 27017 should not be flagged (not in specific list)"
+        );
+    }
+
+    #[test]
+    fn test_backdoor_ports_flagged() {
+        // Known backdoor/C2 ports should still be flagged
+        assert!(super::is_suspicious_port(4444), "Common backdoor port 4444");
+        assert!(super::is_suspicious_port(8888), "Common backdoor port 8888");
     }
 }
