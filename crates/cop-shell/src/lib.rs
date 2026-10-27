@@ -19,17 +19,19 @@ const MAX_DEPTH: usize = 4;
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Analysis {
     pub actions: Vec<String>,
+    /// The 1-based script line each action came from, parallel to `actions`.
+    pub lines: Vec<usize>,
     pub unparsed: bool,
 }
 
 /// Analyze one Bash command string.
 pub fn analyze(command: &str) -> Analysis {
     let mut out = Analysis::default();
-    analyze_into(command, 0, &mut out);
+    analyze_into(command, 0, 0, &mut out);
     out
 }
 
-fn analyze_into(src: &str, depth: usize, out: &mut Analysis) {
+fn analyze_into(src: &str, depth: usize, base_line: usize, out: &mut Analysis) {
     if depth > MAX_DEPTH {
         out.unparsed = true;
         return;
@@ -53,6 +55,8 @@ fn analyze_into(src: &str, depth: usize, out: &mut Analysis) {
     let mut walker = Walker {
         src: src.as_bytes(),
         depth,
+        base_line,
+        cur: base_line + 1,
         out,
         cwd: None,
     };
@@ -62,6 +66,10 @@ fn analyze_into(src: &str, depth: usize, out: &mut Analysis) {
 struct Walker<'a> {
     src: &'a [u8],
     depth: usize,
+    /// Line offset of this text inside the outer script (0 at the top).
+    base_line: usize,
+    /// Script line of the node being visited; every action takes it.
+    cur: usize,
     out: &'a mut Analysis,
     /// Directory set by a literal `cd` earlier in the same command, for relative write paths.
     cwd: Option<String>,
@@ -69,6 +77,7 @@ struct Walker<'a> {
 
 impl Walker<'_> {
     fn visit(&mut self, node: Node) {
+        self.cur = self.base_line + node.start_position().row + 1;
         match node.kind() {
             "heredoc_body" => {}
             "redirected_statement" => {
@@ -92,6 +101,12 @@ impl Walker<'_> {
         }
     }
 
+    /// Record one action with the line it came from.
+    fn emit(&mut self, text: String) {
+        self.out.actions.push(text);
+        self.out.lines.push(self.cur);
+    }
+
     fn text(&self, node: Node) -> String {
         node.utf8_text(self.src).unwrap_or("").to_string()
     }
@@ -113,7 +128,7 @@ impl Walker<'_> {
 
     /// Record that we cannot tell statically what runs. The judge asks (never allows).
     fn uncertain(&mut self, reason: &str) {
-        self.out.actions.push(format!("uncertain {reason}"));
+        self.emit(format!("uncertain {reason}"));
     }
 
     /// Look at the command word and its arguments: dynamic names, decoded payloads, inline code.
@@ -127,7 +142,7 @@ impl Walker<'_> {
         }
         if runs_code(&name) {
             // Code given inline (python -c, sqlite3 ...) is judged as text: it may name protected state.
-            self.out.actions.push(format!("inline {}", argv.join(" ")));
+            self.emit(format!("inline {}", argv.join(" ")));
         }
     }
 
@@ -146,8 +161,10 @@ impl Walker<'_> {
     fn command(&mut self, node: Node) {
         let argv = self.argv(node);
         if !argv.is_empty() {
-            self.out.actions.push(format!("exec {}", argv.join(" ")));
+            self.emit(format!("exec {}", argv.join(" ")));
             self.judge_name(node, &argv);
+            self.script_target(&argv);
+            self.destructive_target(&argv);
             self.track_cd(&argv);
             self.write_targets(&argv);
             self.wrapped_command(&argv);
@@ -174,7 +191,7 @@ impl Walker<'_> {
         if stages.len() >= 2 {
             let argvs: Vec<Vec<String>> = stages.iter().map(|s| self.argv(*s)).collect();
             let parts: Vec<String> = argvs.iter().map(|a| a.join(" ")).collect();
-            self.out.actions.push(format!("pipe {}", parts.join(" | ")));
+            self.emit(format!("pipe {}", parts.join(" | ")));
             // Text piped into a shell or interpreter runs as code we cannot read here.
             for argv in argvs.iter().skip(1).filter(|a| !a.is_empty()) {
                 if runs_code(&base_name(&argv[0])) {
@@ -186,6 +203,48 @@ impl Walker<'_> {
         let kids: Vec<Node> = node.children(&mut cursor).collect();
         for kid in kids {
             self.visit(kid);
+        }
+    }
+
+    /// A command that runs a script file: `bash x.sh`, `sh x`, `source x`, `. x`, or a path like `./x.sh`.
+    /// `script` means the file must be a script (missing or unreadable asks). `script-maybe` is a path
+    /// that may be a binary; the judge reads only its first bytes and skips it unless it starts with `#!`.
+    fn script_target(&mut self, argv: &[String]) {
+        let name = base_name(&argv[0]);
+        let shell_args = &argv[1..];
+        let target: Option<(String, bool)> = if SHELLS.contains(&name.as_str()) {
+            let runs_string = shell_args
+                .iter()
+                .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('c'));
+            if runs_string {
+                None
+            } else {
+                shell_args
+                    .iter()
+                    .find(|a| !a.starts_with('-'))
+                    .map(|a| (a.clone(), false))
+            }
+        } else if name == "source" || name == "." {
+            argv.get(1).map(|a| (a.clone(), false))
+        } else if argv[0].contains('/') {
+            let is_script = [".sh", ".bash", ".zsh"]
+                .iter()
+                .any(|ext| argv[0].ends_with(ext));
+            Some((argv[0].clone(), !is_script))
+        } else {
+            None
+        };
+        if let Some((path, maybe)) = target {
+            let kind = if maybe { "script-maybe" } else { "script" };
+            let resolved = self.normalize(&path);
+            self.emit(format!("{kind} {resolved}"));
+        }
+    }
+
+    /// Delete, format or re-own commands whose target we cannot read: they ask.
+    fn destructive_target(&mut self, argv: &[String]) {
+        if destructive_with_unknown_target(argv) {
+            self.uncertain("a destructive command has a variable or glob target");
         }
     }
 
@@ -272,7 +331,7 @@ impl Walker<'_> {
             _ => None,
         };
         if let Some(code) = inner {
-            analyze_into(&code, self.depth + 1, self.out);
+            analyze_into(&code, self.depth + 1, self.cur.saturating_sub(1), self.out);
         }
     }
 
@@ -295,7 +354,7 @@ impl Walker<'_> {
             return;
         }
         let normalized = self.normalize(path);
-        self.out.actions.push(format!("write {normalized}"));
+        self.emit(format!("write {normalized}"));
     }
 }
 
@@ -309,6 +368,33 @@ fn is_redirect(kind: &str) -> bool {
 /// Child nodes of a `command` that are not words of the argv.
 fn is_skipped(kind: &str) -> bool {
     is_redirect(kind) || kind == "comment" || kind == "variable_assignment"
+}
+
+/// Shells that run a script file when given one.
+const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];
+
+/// Commands that delete, format or re-own files, with a target that is a variable or a glob.
+fn destructive_with_unknown_target(argv: &[String]) -> bool {
+    let name = base_name(&argv[0]);
+    let args = &argv[1..];
+    let short = |a: &String, letters: &str| {
+        a.starts_with('-') && !a.starts_with("--") && letters.chars().any(|c| a.contains(c))
+    };
+    let destructive = match name.as_str() {
+        "rm" => args
+            .iter()
+            .any(|a| short(a, "rRf") || a == "--recursive" || a == "--force"),
+        "dd" => true,
+        n if n.starts_with("mkfs") => true,
+        "chmod" | "chown" => args.iter().any(|a| short(a, "R") || a == "--recursive"),
+        "git" => {
+            args.first().is_some_and(|sub| sub == "clean") && args.iter().any(|a| short(a, "f"))
+        }
+        "find" => args.iter().any(|a| a == "-delete"),
+        _ => false,
+    };
+    let unknown_target = args.iter().any(|a| a.contains(['$', '`', '*', '?', '[']));
+    destructive && unknown_target
 }
 
 fn base_name(word: &str) -> String {

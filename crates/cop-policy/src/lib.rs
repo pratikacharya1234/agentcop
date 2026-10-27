@@ -11,6 +11,9 @@ use cop_core::{AgentEvent, Verdict};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+mod guard;
+mod scripts;
+
 /// A single rule from the policy file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
@@ -49,12 +52,40 @@ pub struct Policy {
     pub rules: Vec<Rule>,
     #[serde(default)]
     pub honeytokens: Vec<Honeytoken>,
+    #[serde(default)]
+    pub hook_guard: HookGuard,
+}
+
+/// Switch and protected files for the hook-entry guard (guard.rs). Read from `[hook_guard]` in TOML.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HookGuard {
+    /// false turns the guard off; the TOML ask rules for settings files still apply.
+    pub enabled: bool,
+    /// Text that identifies the AgentCop hook entry in a settings file.
+    pub marker: String,
+    /// Project settings files the guard protects, matched as path suffixes.
+    pub settings_files: Vec<String>,
+}
+
+impl Default for HookGuard {
+    fn default() -> Self {
+        HookGuard {
+            enabled: true,
+            marker: "cop-hook".to_string(),
+            settings_files: vec![
+                ".claude/settings.json".to_string(),
+                ".claude/settings.local.json".to_string(),
+            ],
+        }
+    }
 }
 
 /// The judge: compiled rules ready to evaluate
 pub struct Judge {
     compiled_rules: Vec<(Regex, String, Option<String>, Option<String>)>, // (pattern, verdict, scope, reason)
     honeytokens: Vec<(Regex, String, Option<String>)>, // (pattern, verdict, reason)
+    hook_guard: HookGuard,
 }
 
 impl Judge {
@@ -75,136 +106,159 @@ impl Judge {
         Ok(Judge {
             compiled_rules,
             honeytokens,
+            hook_guard: policy.hook_guard,
         })
     }
 
-    /// Judge an event and return a verdict (Deny > Ask > Allow)
-    ///
-    /// PLAN (C2-R):
-    /// 1. Honeytokens match the raw text first. Any mention is a trigger.
-    /// 2. A Bash command is parsed (cop-shell). A command we cannot parse is denied (fail closed).
-    /// 3. A rule with scope "bash" matches the action lines of the parsed command (exec, write, pipe).
-    /// 4. Any other rule matches the raw text, as before.
-    /// 5. The strictest verdict wins.
+    /// Judge an event with no session history. Scripts it runs are still inspected.
     pub fn judge(&self, event: &AgentEvent) -> (Verdict, String) {
-        // Combine tool name and input into a searchable string
-        let searchable = format!("{} {}", event.tool_name, event.tool_input);
+        self.judge_in_session(event, &[])
+    }
 
-        // Check honeytokens first (always deny if triggered)
-        for (pattern, _verdict, reason) in &self.honeytokens {
-            if pattern.is_match(&searchable) {
-                let reason_str = reason
-                    .as_deref()
-                    .unwrap_or("Honeytoken triggered")
-                    .to_string();
-                return (Verdict::Deny, reason_str);
+    /// Judge an event. `written` lists the absolute paths the agent created or changed earlier in
+    /// this session. A script in that list asks, even when its contents look clean.
+    ///
+    /// PLAN (C2-R3):
+    /// 1. Honeytokens match the raw text first. Any mention is a deny.
+    /// 2. A Bash command is parsed (cop-shell). Input we cannot read is denied (fail closed).
+    /// 3. The hook-entry guard (guard.rs) can deny a change to project settings.
+    /// 4. Scoped Bash rules match action lines; other rules match the raw text. Strictest wins.
+    /// 5. Each script the command runs is inspected (scripts.rs). Its verdict joins the strictest.
+    pub fn judge_in_session(&self, event: &AgentEvent, written: &[String]) -> (Verdict, String) {
+        let searchable = format!("{} {}", event.tool_name, event.tool_input);
+        if let Some(reason) = self.honeytoken_reason(&searchable) {
+            return (Verdict::Deny, reason);
+        }
+        if !event.tool_name.eq_ignore_ascii_case("bash") {
+            if let Some(reason) = guard::hook_entry_change(&self.hook_guard, event, &[]) {
+                return (Verdict::Deny, reason.to_string());
             }
+            return self
+                .match_rules(&event.tool_name, &[], &[], None, &searchable)
+                .unwrap_or_else(no_rules);
         }
 
-        let is_bash = event.tool_name.eq_ignore_ascii_case("bash");
-        let actions = if is_bash {
-            // Claude Code sends {"command": "..."}. Anything else is unreadable, so deny it.
-            let Some(command) = event.tool_input["command"].as_str() else {
-                return (
-                    Verdict::Deny,
-                    "Bash input has no command text; denied (fail closed)".to_string(),
-                );
-            };
-            let analysis = cop_shell::analyze(command);
-            if analysis.unparsed {
-                return (
-                    Verdict::Deny,
-                    "Could not read the shell command; denied (fail closed)".to_string(),
-                );
-            }
-            analysis.actions
-        } else {
-            Vec::new()
+        // Claude Code sends {"command": "..."}. Anything else is unreadable, so deny it.
+        let Some(command) = event.tool_input["command"].as_str() else {
+            return (
+                Verdict::Deny,
+                "Bash input has no command text; denied (fail closed)".to_string(),
+            );
         };
-
-        let writes: Vec<&str> = actions
+        let analysis = cop_shell::analyze(command);
+        if analysis.unparsed {
+            return (
+                Verdict::Deny,
+                "Could not read the shell command; denied (fail closed)".to_string(),
+            );
+        }
+        let writes: Vec<&str> = analysis
+            .actions
             .iter()
             .filter_map(|a| a.strip_prefix("write "))
             .collect();
-        if let Some(reason) = hook_entry_change(event, &writes) {
+        if let Some(reason) = guard::hook_entry_change(&self.hook_guard, event, &writes) {
             return (Verdict::Deny, reason.to_string());
         }
 
-        // Track the strictest verdict found
-        let mut strictest = Verdict::Allow;
-        let mut strictest_reason = "No rules matched".to_string();
+        let mut result = self
+            .match_rules(
+                "Bash",
+                &analysis.actions,
+                &analysis.lines,
+                None,
+                &searchable,
+            )
+            .unwrap_or_else(no_rules);
+        for (_, child, child_maybe) in scripts::script_calls(&analysis.actions) {
+            if let Some(hit) = self.inspect_script(child, child_maybe, 1, written) {
+                result = keep_stricter(result, hit);
+            }
+        }
+        result
+    }
 
-        // Check all rules (strictest-wins logic)
+    /// The reason of the first honeytoken that matches `text`, if any.
+    fn honeytoken_reason(&self, text: &str) -> Option<String> {
+        self.honeytokens
+            .iter()
+            .find(|(pattern, _, _)| pattern.is_match(text))
+            .map(|(_, _, reason)| {
+                reason
+                    .as_deref()
+                    .unwrap_or("Honeytoken triggered")
+                    .to_string()
+            })
+    }
+
+    /// Apply the rules and return the strictest hit, if any. Scoped rules match action lines; the
+    /// others match `searchable`. `label` (a script path) goes in front of the reason, with the
+    /// line when the hit is an action.
+    fn match_rules(
+        &self,
+        tool: &str,
+        actions: &[String],
+        lines: &[usize],
+        label: Option<&str>,
+        searchable: &str,
+    ) -> Option<(Verdict, String)> {
+        let mut result: Option<(Verdict, String)> = None;
         for (pattern, verdict_str, scope, reason) in &self.compiled_rules {
-            // If scope is set, only match if the tool matches.
             // Case-insensitive: Claude Code sends "Bash", policies write "bash".
             if let Some(s) = scope {
-                if !event.tool_name.eq_ignore_ascii_case(s) {
+                if !tool.eq_ignore_ascii_case(s) {
                     continue;
                 }
             }
-
-            // Scoped Bash rules see what the command does; everything else sees the raw text.
-            let matched = if is_bash && scope.is_some() {
-                actions.iter().any(|line| pattern.is_match(line))
+            let hit = if scope.is_some() {
+                actions
+                    .iter()
+                    .position(|line| pattern.is_match(line))
+                    .map(Some)
+            } else if pattern.is_match(searchable) {
+                Some(None)
             } else {
-                pattern.is_match(&searchable)
+                None
             };
-
-            if matched {
-                let verdict = parse_verdict(verdict_str);
-                let reason_str = reason.as_deref().unwrap_or("Rule matched").to_string();
-
-                strictest = verdict_strictest(strictest, verdict);
-                if strictest == verdict {
-                    strictest_reason = reason_str;
-                }
-            }
+            let Some(index) = hit else { continue };
+            let base = reason.as_deref().unwrap_or("Rule matched");
+            let text = match (label, index) {
+                (Some(label), Some(i)) => format!("{label} line {}: {base}", lines[i]),
+                (Some(label), None) => format!("{label}: {base}"),
+                (None, _) => base.to_string(),
+            };
+            let next = (parse_verdict(verdict_str), text);
+            result = Some(match result {
+                Some(current) => keep_stricter(current, next),
+                None => next,
+            });
         }
-
-        (strictest, strictest_reason)
+        result
     }
 }
 
-/// Built-in guard (code, not TOML: it needs to read the file before a full rewrite).
-/// A change that removes or alters the AgentCop hook entry in a project settings file is denied.
-/// Returns the deny reason, or None when the rules in the policy file decide.
-///
-/// PLAN:
-/// 1. Edit / MultiEdit: deny when an old_string holds the hook command (any change to it).
-/// 2. Write: deny when the file holds the hook now and the new content does not.
-/// 3. Bash: deny when the command names the hook and writes a project settings file.
-fn hook_entry_change(event: &AgentEvent, bash_writes: &[&str]) -> Option<&'static str> {
-    const HOOK: &str = "cop-hook";
-    const REASON: &str = "Would remove or change the AgentCop hook entry in project settings";
-    let input = &event.tool_input;
-    let file = input["file_path"].as_str().unwrap_or("");
-    let names_hook = |s: Option<&str>| s.is_some_and(|text| text.contains(HOOK));
-    let hit = match event.tool_name.as_str() {
-        "Edit" => is_project_settings(file) && names_hook(input["old_string"].as_str()),
-        "MultiEdit" => {
-            is_project_settings(file)
-                && input["edits"]
-                    .as_array()
-                    .is_some_and(|edits| edits.iter().any(|e| names_hook(e["old_string"].as_str())))
-        }
-        "Write" => {
-            is_project_settings(file)
-                && std::fs::read_to_string(file).is_ok_and(|old| old.contains(HOOK))
-                && !names_hook(input["content"].as_str())
-        }
-        name if name.eq_ignore_ascii_case("bash") => {
-            names_hook(input["command"].as_str())
-                && bash_writes.iter().any(|w| is_project_settings(w))
-        }
-        _ => false,
-    };
-    hit.then_some(REASON)
+fn no_rules() -> (Verdict, String) {
+    (Verdict::Allow, "No rules matched".to_string())
 }
 
-/// Project-level Claude Code settings (not the global ~/.claude one, which the TOML rules deny).
-fn is_project_settings(path: &str) -> bool {
-    path.ends_with(".claude/settings.json") || path.ends_with(".claude/settings.local.json")
+/// The stricter of two (verdict, reason) pairs. On a tie the first one is kept.
+pub(crate) fn keep_stricter(
+    current: (Verdict, String),
+    next: (Verdict, String),
+) -> (Verdict, String) {
+    if rank(next.0) > rank(current.0) {
+        next
+    } else {
+        current
+    }
+}
+
+fn rank(verdict: Verdict) -> u8 {
+    match verdict {
+        Verdict::Allow => 0,
+        Verdict::Ask => 1,
+        Verdict::Deny => 2,
+    }
 }
 
 /// Parse a verdict string into the Verdict enum
@@ -217,21 +271,13 @@ fn parse_verdict(s: &str) -> Verdict {
     }
 }
 
-/// Return the stricter of two verdicts (Deny > Ask > Allow)
-fn verdict_strictest(a: Verdict, b: Verdict) -> Verdict {
-    match (a, b) {
-        (Verdict::Deny, _) | (_, Verdict::Deny) => Verdict::Deny,
-        (Verdict::Ask, _) | (_, Verdict::Ask) => Verdict::Ask,
-        _ => Verdict::Allow,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn create_test_judge() -> Judge {
         let policy = Policy {
+            hook_guard: HookGuard::default(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
@@ -381,6 +427,7 @@ mod tests {
     #[test]
     fn strictest_wins_deny_over_ask() {
         let policy = Policy {
+            hook_guard: HookGuard::default(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
@@ -435,6 +482,7 @@ mod tests {
     #[test]
     fn scope_filter_works() {
         let policy = Policy {
+            hook_guard: HookGuard::default(),
             mode: Mode::Enforce,
             rules: vec![Rule {
                 pattern: "git.*push".to_string(),

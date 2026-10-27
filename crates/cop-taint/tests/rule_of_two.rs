@@ -175,7 +175,7 @@ fn fresh_store(name: &str) -> SessionStore {
 fn frozen_state_survives_save_and_load() {
     let store = fresh_store("persist");
     let (flags, _) = run(&[untrusted(), sensitive(), external()]);
-    store.save(Some("s"), flags).unwrap();
+    store.save(Some("s"), flags.clone()).unwrap();
     let loaded = store.load(Some("s")).unwrap();
     assert!(loaded.frozen);
     assert_eq!(loaded, flags);

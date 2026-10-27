@@ -175,13 +175,13 @@ fn run() -> Result<(), String> {
     };
     let session = event.session_id.as_deref();
     let before = sessions.load(session)?;
-    let (after, taint_reason) = step(before, &event, &taint);
+    let (after, taint_reason) = step(before.clone(), &event, &taint);
     sessions.save(session, after)?;
 
     // Judge the event. The stricter verdict wins; taint can only add a deny.
     let (verdict, reason) = match taint_reason {
         Some(reason) => (Verdict::Deny, reason),
-        None => judge.judge(&event),
+        None => judge.judge_in_session(&event, &before.written),
     };
 
     // Create case and append to evidence store

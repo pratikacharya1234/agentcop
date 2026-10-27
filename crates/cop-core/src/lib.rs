@@ -44,6 +44,28 @@ pub struct Case {
     pub reason: Option<String>,
 }
 
+/// Absolute form of a path the agent named. `~` and `~/` expand to HOME, a relative path joins
+/// `cwd`, and symlinks are resolved when the file exists. Both sides of a comparison use this,
+/// so one file always gets one name.
+pub fn absolute_path(raw: &str, cwd: &std::path::Path) -> String {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let expanded = match (raw, home) {
+        ("~", Some(home)) => home,
+        (_, Some(home)) if raw.starts_with("~/") => home.join(&raw[2..]),
+        _ => std::path::PathBuf::from(raw),
+    };
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        cwd.join(expanded)
+    };
+    joined
+        .canonicalize()
+        .unwrap_or(joined)
+        .to_string_lossy()
+        .into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

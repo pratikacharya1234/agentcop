@@ -267,3 +267,77 @@ fn edit_of_repo_policy_still_allowed() {
     );
     assert_eq!(verdict(&e), Verdict::Allow);
 }
+
+// C2-R3. A variable prefix (FOO=1) is not the command word: the shell behind it still counts.
+
+#[test]
+fn assignment_prefix_does_not_hide_a_shell_in_a_pipeline() {
+    assert_eq!(verdict(&bash("echo hi | FOO=1 sh")), Verdict::Ask);
+}
+
+// C2-R3 item 2. Destructive commands with a variable or glob target ask; literal targets are allowed.
+
+#[test]
+fn rm_with_variable_target_asks() {
+    assert_eq!(verdict(&bash("rm -rf $BUILD_DIR")), Verdict::Ask);
+}
+
+#[test]
+fn rm_with_glob_target_asks() {
+    assert_eq!(verdict(&bash("rm -rf build/*")), Verdict::Ask);
+}
+
+#[test]
+fn rm_with_literal_target_is_allowed() {
+    assert_eq!(verdict(&bash("rm -rf ./build")), Verdict::Allow);
+}
+
+#[test]
+fn dd_to_variable_device_asks() {
+    assert_eq!(
+        verdict(&bash("dd if=/dev/zero of=$DEV bs=1M")),
+        Verdict::Ask
+    );
+}
+
+#[test]
+fn mkfs_on_variable_device_asks() {
+    assert_eq!(verdict(&bash("mkfs.ext4 $DEV")), Verdict::Ask);
+}
+
+#[test]
+fn recursive_chmod_on_variable_asks() {
+    assert_eq!(verdict(&bash("chmod -R 777 $DIR")), Verdict::Ask);
+}
+
+#[test]
+fn git_clean_with_variable_asks() {
+    assert_eq!(verdict(&bash("git clean -fdx $REPO")), Verdict::Ask);
+}
+
+#[test]
+fn find_delete_with_glob_asks() {
+    assert_eq!(verdict(&bash("find . -name '*.log' -delete")), Verdict::Ask);
+}
+
+// C2-R3 item 4. The hook-entry guard's switch and protected files come from TOML.
+
+#[test]
+fn hook_guard_can_be_switched_off_in_policy() {
+    let text = format!(
+        "{}\n[hook_guard]\nenabled = false\n",
+        include_str!("../../../policy/default.toml")
+    );
+    let policy: Policy = toml::from_str(&text).expect("policy parses");
+    let judge = Judge::new(policy).expect("policy compiles");
+    let e = event(
+        "Edit",
+        json!({
+            "file_path": "/home/u/proj/.claude/settings.json",
+            "old_string": "/opt/agentcop/cop-hook",
+            "new_string": "/bin/true"
+        }),
+    );
+    // With the guard off, the TOML ask rule for project settings is what decides.
+    assert_eq!(judge.judge(&e).0, Verdict::Ask);
+}

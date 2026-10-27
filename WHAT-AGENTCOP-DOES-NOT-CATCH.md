@@ -9,7 +9,7 @@ DRAFT for owner review. Not published. This page lists what AgentCop misses toda
 - **The holding cell is not connected.** `cop-cell` can freeze processes, but no running component calls it. A Rule of Two freeze blocks tool calls only.
 
 ## Evasion
-- **Encoded or indirect commands.** Base64 piped into a shell (corpus case ev-11) and command substitution such as `$(echo rm) -rf /` (ev-12) now ask for approval instead of running silently. Nothing decodes them. A script file run from disk (`bash x.sh`) is not read, and a variable used as an argument (`rm -rf $X`) is not resolved.
+- **Encoded or indirect commands.** Base64 piped into a shell (corpus case ev-11) and command substitution such as `$(echo rm) -rf /` (ev-12) now ask for approval instead of running silently. Nothing decodes them. A script file is read when a command runs it (`bash x.sh`), but a script changed after that read is not re-checked, and scripts run by other tools (`npm run`, `make`, `python x.py`) are not read. A variable used as an argument (`rm -rf $X`) makes the command ask.
 - **Writes made with unlisted tools.** The Bash write rule matches a fixed list of verbs (`>`, `tee`, `sed -i`, `rm`, `mv`, `cp`, and a few more). A write through a Python one-liner is caught only when the code names `.agentcop` or `.claude/settings`. Other inline code is not read.
 - **Pattern rules.** Every rule is a regular expression on the tool name and its input. A command the author did not anticipate can pass.
 

@@ -14,12 +14,15 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Flags {
     pub untrusted: bool,
     pub sensitive: bool,
     pub external: bool,
     pub frozen: bool,
+    /// Absolute paths the agent created or changed this session (C2-R3: scripts it wrote ask).
+    #[serde(default)]
+    pub written: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -91,7 +94,26 @@ pub fn classify(event: &AgentEvent, rules: &TaintRules) -> Flags {
         sensitive,
         external: event.tool_name.starts_with("mcp__"),
         frozen: false,
+        written: written_by_tool(event),
     }
+}
+
+/// File-edit tools name the file they change in `file_path`.
+fn written_by_tool(event: &AgentEvent) -> Vec<String> {
+    const EDIT_TOOLS: [&str; 3] = ["Write", "Edit", "MultiEdit"];
+    if !EDIT_TOOLS.contains(&event.tool_name.as_str()) {
+        return Vec::new();
+    }
+    event.tool_input["file_path"]
+        .as_str()
+        .map(|p| vec![absolute(p)])
+        .unwrap_or_default()
+}
+
+/// Absolute form of a path, from the hook's working directory.
+fn absolute(raw: &str) -> String {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    cop_core::absolute_path(raw, &cwd)
 }
 
 fn classify_bash(event: &AgentEvent, rules: &TaintRules) -> Flags {
@@ -108,30 +130,47 @@ fn classify_bash(event: &AgentEvent, rules: &TaintRules) -> Flags {
         };
     }
     let actions = analysis.actions.join("\n");
+    let written = analysis
+        .actions
+        .iter()
+        .filter_map(|a| a.strip_prefix("write "))
+        .map(absolute)
+        .collect();
     Flags {
         untrusted: rules.untrusted_bash.iter().any(|re| re.is_match(&actions)),
         sensitive: content || rules.sensitive.iter().any(|re| re.is_match(&actions)),
         external: rules.external.iter().any(|re| re.is_match(&actions)),
         frozen: false,
+        written,
     }
 }
 
 /// Apply one event to the session's flags. Returns the new flags and a deny reason, if the event must be denied.
 pub fn step(before: Flags, event: &AgentEvent, rules: &TaintRules) -> (Flags, Option<String>) {
     if before.frozen {
-        return (before, Some("session is frozen by Rule of Two".to_string()));
+        return (
+            before.clone(),
+            Some("session is frozen by Rule of Two".to_string()),
+        );
     }
     let added = classify(event, rules);
+    let mut written = before.written.clone();
+    for path in added.written {
+        if !written.contains(&path) {
+            written.push(path);
+        }
+    }
     let after = Flags {
         untrusted: before.untrusted || added.untrusted,
         sensitive: before.sensitive || added.sensitive,
         external: before.external || added.external,
         frozen: false,
+        written,
     };
     if after.untrusted && after.sensitive && after.external {
         let frozen = Flags {
             frozen: true,
-            ..after
+            ..after.clone()
         };
         return (frozen, Some("Rule of Two: untrusted input, sensitive data and an external action in one session".to_string()));
     }
