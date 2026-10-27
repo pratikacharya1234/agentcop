@@ -1,7 +1,7 @@
 // Courtroom end-to-end tests. Each test runs against a real server on 127.0.0.1 with a seeded evidence DB.
 import { test, expect } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -33,15 +33,15 @@ function seed(dbPath: string) {
 }
 
 let court: Courtroom;
-let decisionsPath: string;
+let statePath: string;
 
 test.beforeAll(async () => {
   const home = mkdtempSync(join(tmpdir(), "courtroom-e2e-"));
   seed(join(home, "evidence.db"));
-  decisionsPath = join(home, "decisions.jsonl");
+  statePath = join(home, "state.db");
   court = await startCourtroom({
     dbPath: join(home, "evidence.db"),
-    decisionsPath,
+    statePath,
     port: 0,
   });
 });
@@ -111,8 +111,14 @@ test.describe.serial("courtroom", () => {
     await expect(page.getByTestId("case-row").filter({ hasText: ALLOW_ID })).toContainText("released");
   });
 
-  test("decisions file is a valid hash chain", async () => {
-    const lines = readFileSync(decisionsPath, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  test("decisions are a valid hash chain in state.db", async () => {
+    const db = new DatabaseSync(statePath);
+    const lines = db.prepare("SELECT seq, prev, hash FROM decisions ORDER BY seq").all() as unknown as {
+      seq: number;
+      prev: string;
+      hash: string;
+    }[];
+    db.close();
     expect(lines.length).toBeGreaterThanOrEqual(2);
     lines.forEach((d, i) => {
       expect(d.seq).toBe(i + 1);

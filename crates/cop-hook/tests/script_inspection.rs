@@ -32,6 +32,11 @@ fn scratch(name: &str) -> PathBuf {
 fn scenario(name: &str, cwd: &Path) -> Scenario {
     let home = scratch(&format!("home-{name}"));
     fs::create_dir_all(home.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        home.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     Scenario {
         home,
         cwd: cwd.to_path_buf(),

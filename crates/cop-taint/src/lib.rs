@@ -58,6 +58,10 @@ struct RulesFile {
     #[serde(default)]
     external_tools: Vec<String>,
     #[serde(default)]
+    network_tools: Vec<String>,
+    #[serde(default)]
+    mcp_send_patterns: Vec<String>,
+    #[serde(default)]
     read_tools: Vec<String>,
     #[serde(default)]
     untrusted_bash: Vec<String>,
@@ -74,6 +78,8 @@ pub struct TaintRules {
     network_commands: Vec<String>,
     untrusted_tools: Vec<String>,
     external_tools: Vec<String>,
+    network_tools: Vec<String>,
+    mcp_send_patterns: Vec<Regex>,
     read_tools: Vec<String>,
     untrusted_bash: Vec<Regex>,
     sensitive: Vec<Regex>,
@@ -92,6 +98,8 @@ impl TaintRules {
         Ok(Self {
             untrusted_tools: file.untrusted_tools,
             external_tools: file.external_tools,
+            network_tools: file.network_tools,
+            mcp_send_patterns: compile(&file.mcp_send_patterns)?,
             read_tools: file.read_tools,
             network_commands: file.network_commands,
             untrusted_bash: compile(&file.untrusted_bash)?,
@@ -128,10 +136,11 @@ pub fn classify_with(event: &AgentEvent, rules: &TaintRules, session: &Flags) ->
     if event.tool_name.eq_ignore_ascii_case("Bash") {
         return classify_bash(event, rules, foreign, &cwd, session.sensitive);
     }
-    classify_tool(event, rules, foreign, &cwd)
+    classify_tool(event, rules, session, &cwd)
 }
 
-fn classify_tool(event: &AgentEvent, rules: &TaintRules, foreign: &[String], cwd: &Path) -> Flags {
+fn classify_tool(event: &AgentEvent, rules: &TaintRules, session: &Flags, cwd: &Path) -> Flags {
+    let foreign = &session.foreign[..];
     let tool = event.tool_name.as_str();
     let text = format!("{} {}", tool, event.tool_input);
     let is_mcp = tool.starts_with("mcp__");
@@ -139,9 +148,19 @@ fn classify_tool(event: &AgentEvent, rules: &TaintRules, foreign: &[String], cwd
     let reads_foreign = in_list(&rules.read_tools)
         && path_field(event).is_some_and(|p| under_any(&cop_core::absolute_path(p, cwd), foreign));
     let untrusted = is_mcp || in_list(&rules.untrusted_tools) || reads_foreign;
-    let external = is_mcp || in_list(&rules.external_tools);
     let sensitive = rules.sensitive.iter().any(|re| re.is_match(&text))
         || rules.sensitive_content.iter().any(|re| re.is_match(&text));
+    // A secret in the session, or in this call, makes any way of sending it out an external action:
+    // web requests (the URL carries the data) and MCP tools that send, post or write.
+    let holds_secret = session.sensitive || sensitive;
+    let mcp_sends = is_mcp
+        && rules
+            .mcp_send_patterns
+            .iter()
+            .any(|re| re.is_match(&tool.to_lowercase()));
+    let external = in_list(&rules.external_tools)
+        || (in_list(&rules.network_tools) && holds_secret)
+        || (is_mcp && (mcp_sends || holds_secret));
     Flags {
         untrusted,
         sensitive,
@@ -344,6 +363,17 @@ pub fn release(
 /// Session state in one SQLite file (`~/.agentcop/state.db`): one row per session, holding its JSON state.
 /// `update` reads, decides and writes in one IMMEDIATE transaction, so parallel hook processes
 /// cannot lose each other's updates (2026-10-27: the old one-file-per-session JSON could).
+/// One human decision, as stored in the `decisions` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecisionRow {
+    pub seq: i64,
+    pub case_id: String,
+    pub action: String,
+    pub at: String,
+    pub prev: String,
+    pub hash: String,
+}
+
 pub struct SessionStore {
     path: PathBuf,
 }
@@ -355,6 +385,7 @@ impl SessionStore {
             path: path.to_path_buf(),
         };
         store.connect()?;
+        cop_core::perms::secure_file(path)?;
         Ok(store)
     }
 
@@ -367,12 +398,71 @@ impl SessionStore {
             [],
         )
         .map_err(|e| format!("open session state: {e}"))?;
+        // Human decisions (release, convict), one hash-chained row each (2026-10-27: moved from decisions.jsonl).
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS decisions (
+                seq INTEGER PRIMARY KEY,
+                case_id TEXT NOT NULL,
+                action TEXT NOT NULL,
+                at TEXT NOT NULL,
+                prev TEXT NOT NULL,
+                hash TEXT NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| format!("open session state: {e}"))?;
         Ok(conn)
     }
 
     pub fn load(&self, session_id: Option<&str>) -> Result<Flags, String> {
         let conn = self.connect()?;
         read_state(&conn, session_key(session_id))
+    }
+
+    /// Import a session row from a legacy JSON file. The key is recorded as `legacy:<digest>`: the file name
+    /// is a hash of the session id, so the live session id can not be recovered and the row never matches a
+    /// live session. It stays for audit. Existing rows are kept.
+    pub fn import_legacy_session(&self, digest: &str, state_json: &str) -> Result<(), String> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO sessions (key, state) VALUES (?1, ?2)",
+            [format!("legacy:{digest}"), state_json.to_string()],
+        )
+        .map_err(|e| format!("import session: {e}"))?;
+        Ok(())
+    }
+
+    /// Number of rows in the decisions table (for migration checks and tests).
+    pub fn decision_count(&self) -> Result<u64, String> {
+        let conn = self.connect()?;
+        conn.query_row("SELECT COUNT(*) FROM decisions", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .map(|n| n as u64)
+        .map_err(|e| format!("count decisions: {e}"))
+    }
+
+    /// Number of imported legacy session rows.
+    pub fn legacy_session_count(&self) -> Result<u64, String> {
+        let conn = self.connect()?;
+        conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE key LIKE 'legacy:%'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|n| n as u64)
+        .map_err(|e| format!("count sessions: {e}"))
+    }
+
+    /// Import one decision from the legacy decisions.jsonl. Existing sequence numbers are kept.
+    pub fn import_decision(&self, d: &DecisionRow) -> Result<(), String> {
+        let conn = self.connect()?;
+        conn.execute(
+            "INSERT OR IGNORE INTO decisions (seq, case_id, action, at, prev, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![d.seq, d.case_id, d.action, d.at, d.prev, d.hash],
+        )
+        .map_err(|e| format!("import decision: {e}"))?;
+        Ok(())
     }
 
     pub fn save(&self, session_id: Option<&str>, flags: Flags) -> Result<(), String> {

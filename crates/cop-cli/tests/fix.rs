@@ -30,6 +30,11 @@ impl Sandbox {
             .join(format!("fix-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("home/.agentcop")).unwrap();
+        fs::set_permissions(
+            root.join("home/.agentcop"),
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
         let default = fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../policy/default.toml"

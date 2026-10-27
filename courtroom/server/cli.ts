@@ -7,7 +7,7 @@ const home = join(homedir(), ".agentcop");
 const port = Number(process.env.COURTROOM_PORT ?? 8787);
 const court = await startCourtroom({
   dbPath: join(home, "evidence.db"),
-  decisionsPath: join(home, "decisions.jsonl"),
+  statePath: join(home, "state.db"),
   port,
 });
 console.log(`Courtroom open at ${court.url}/#token=${court.token}`);

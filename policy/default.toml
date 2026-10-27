@@ -133,6 +133,29 @@ scope = "bash"
 verdict = "ask"
 reason = "Deleting outside the project directory"
 
+# After the session has read a secret, running code and fetching packages ask. The secret may be in the
+# code's arguments, its network traffic or the package it pulls. A session with no secret is not affected.
+[[rules]]
+pattern = '^exec (?:python[\d.]*|node|ruby|perl|php|lua)\b'
+scope = "bash"
+verdict = "ask"
+requires_secret = true
+reason = "Running code after the session read a secret"
+
+[[rules]]
+pattern = '^exec (?:npm|npx|yarn|pnpm|pip[\d.]*|cargo)\s+(?:install|i|ci|add|update|fetch|download|run)\b'
+scope = "bash"
+verdict = "ask"
+requires_secret = true
+reason = "Fetching or running packages after the session read a secret"
+
+[[rules]]
+pattern = '^exec git\s+(?:fetch|clone|pull)\b'
+scope = "bash"
+verdict = "ask"
+requires_secret = true
+reason = "Fetching a repository after the session read a secret"
+
 # Inline code (python -c, node -e, perl -e, sqlite3, sh script) that names protected state: deny.
 # Code that does not name protected state stays allowed; that is a known limit (see THREAT_MODEL).
 [[rules]]
@@ -165,6 +188,9 @@ pattern = '^write (?:.*/)?\.claude/settings(?:\.local)?\.json$'
 scope = "bash"
 verdict = "ask"
 reason = "Changing project Claude Code settings"
+
+# Redaction before storage: the built-in patterns are in redact.toml (compiled into the binary). Add your own
+# [[redact]] tables here; `redact = "off"` removes all of them (the hook prints a loud warning).
 
 # Honeytokens (planted decoys)
 [[honeytokens]]

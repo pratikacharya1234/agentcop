@@ -98,7 +98,7 @@ impl Sandbox {
 
     fn run_with_hook(&self, subcommand: &str, hook: &str) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_agentcop"))
-            .arg(subcommand)
+            .args(subcommand.split_whitespace())
             .env_clear()
             .env("HOME", self.home())
             .env("AGENTCOP_HOOK", hook)
@@ -141,7 +141,11 @@ fn install_writes_claude_code_hook_shape() {
     assert_eq!(ours["matcher"], "*");
     let hook = &ours["hooks"][0];
     assert_eq!(hook["type"], "command");
-    assert_eq!(hook["command"], sb.hook_path());
+    // 2026-10-27: settings point at the installed copy, never at the file we copied from.
+    assert_eq!(
+        hook["command"],
+        sb.home().join(".agentcop/bin/cop-hook").to_str().unwrap()
+    );
     assert_eq!(hook["onFailure"], "block");
     assert!(hook.get("hookPath").is_none(), "no hookPath key");
 }
@@ -239,4 +243,178 @@ fn install_refuses_missing_hook_and_leaves_settings_untouched() {
         "settings must not change"
     );
     assert!(!sb.backup().exists(), "no backup written on failure");
+}
+
+// 2026-10-27 (item 3, install hygiene). The live hook is a copy in ~/.agentcop/bin.
+
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[test]
+fn install_copies_the_hook_to_bin_as_a_program() {
+    let sb = Sandbox::new();
+    assert_success(&sb.run("install"));
+    let bin = sb.home().join(".agentcop/bin/cop-hook");
+    assert!(bin.exists(), "the copy exists");
+    assert_eq!(mode(&bin), 0o700, "the copy is a program: 0700");
+    assert_eq!(
+        mode(&sb.home().join(".agentcop")),
+        0o700,
+        "state folder 0700"
+    );
+    assert_eq!(
+        mode(&sb.home().join(".agentcop/bin")),
+        0o700,
+        "bin folder 0700"
+    );
+}
+
+#[test]
+fn install_never_points_settings_at_a_build_directory() {
+    let sb = Sandbox::new();
+    // The stand-in lives under target/debug, as a development build would.
+    let stand_in = sb.root.join("target/debug/cop-hook");
+    fs::create_dir_all(stand_in.parent().unwrap()).unwrap();
+    fs::write(&stand_in, b"#!/bin/sh\nexit 0\n").unwrap();
+    assert_success(&sb.run_with_hook("install", stand_in.to_str().unwrap()));
+    let s = sb.settings_json();
+    let command = s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        .as_str()
+        .unwrap();
+    assert!(
+        !command.contains("/target/"),
+        "settings must not point at a build directory: {command}"
+    );
+}
+
+#[test]
+fn install_tightens_existing_state_to_explicit_modes() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let state = sb.home().join(".agentcop");
+    fs::create_dir_all(&state).unwrap();
+    fs::set_permissions(&state, fs::Permissions::from_mode(0o775)).unwrap();
+    fs::write(state.join("decisions.jsonl"), "").unwrap();
+    fs::set_permissions(
+        state.join("decisions.jsonl"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    assert_success(&sb.run("install"));
+    assert_eq!(mode(&state), 0o700);
+    assert_eq!(mode(&state.join("policy.toml")), 0o600);
+}
+
+#[test]
+fn install_keeps_custom_policy_rules_and_mode_and_backs_up() {
+    let sb = Sandbox::new();
+    let state = sb.home().join(".agentcop");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(
+        state.join("policy.toml"),
+        "mode = \"log-only\"\n\n[[rules]]\npattern = \"my-internal-deploy\"\nverdict = \"deny\"\nreason = \"Mine\"\n",
+    )
+    .unwrap();
+    let out = sb.run("install");
+    assert_success(&out);
+    let text = fs::read_to_string(state.join("policy.toml")).unwrap();
+    assert!(
+        text.contains("mode = \"log-only\""),
+        "the user's mode is kept"
+    );
+    assert!(
+        text.contains("my-internal-deploy"),
+        "the user's custom rule is kept"
+    );
+    assert!(text.contains("[[rules]]"), "the new default rules are in");
+    assert_eq!(mode(&state.join("policy.toml")), 0o600);
+    let backups: Vec<_> = fs::read_dir(&state)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .filter(|n| n.starts_with("policy.toml.bak-"))
+        .collect();
+    assert_eq!(backups.len(), 1, "the old policy is backed up");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("policy diff"),
+        "a diff is shown"
+    );
+}
+
+#[test]
+fn install_imports_legacy_json_into_state_db_and_archives_it() {
+    let sb = Sandbox::new();
+    let state = sb.home().join(".agentcop");
+    fs::create_dir_all(state.join("sessions")).unwrap();
+    fs::write(
+        state.join("sessions/abc123.json"),
+        r#"{"frozen":false,"untrusted":false,"sensitive":false,"external":false}"#,
+    )
+    .unwrap();
+    fs::write(
+        state.join("decisions.jsonl"),
+        "{\"seq\":1,\"case_id\":\"CASE-aaaaaaaaaaaa\",\"action\":\"convict\",\"at\":\"2026-10-23T00:00:00Z\",\"prev\":\"0\",\"hash\":\"h1\"}\n",
+    )
+    .unwrap();
+    assert_success(&sb.run("install"));
+    assert!(
+        !state.join("sessions").exists(),
+        "legacy sessions moved away"
+    );
+    assert!(
+        !state.join("decisions.jsonl").exists(),
+        "legacy decisions moved away"
+    );
+    assert!(state.join("legacy/sessions/abc123.json").exists());
+    assert!(state.join("legacy/decisions.jsonl").exists());
+    let store = cop_taint::SessionStore::open(&state.join("state.db")).unwrap();
+    assert_eq!(
+        store.legacy_session_count().unwrap(),
+        1,
+        "the session row is imported"
+    );
+    assert_eq!(
+        store.decision_count().unwrap(),
+        1,
+        "the decision row is imported"
+    );
+}
+
+#[test]
+fn install_dry_run_changes_nothing() {
+    let sb = Sandbox::new();
+    let before = fs::read(sb.settings()).unwrap();
+    assert_success(&sb.run("install --dry-run"));
+    assert_eq!(
+        fs::read(sb.settings()).unwrap(),
+        before,
+        "settings unchanged"
+    );
+    assert!(!sb.home().join(".agentcop").exists(), "nothing created");
+}
+
+#[test]
+fn install_re_points_an_old_build_path() {
+    let sb = Sandbox::new();
+    let old = sb.root.join("target/debug/cop-hook");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, b"").unwrap();
+    let mut settings: Value = serde_json::from_str(REALISTIC_SETTINGS).unwrap();
+    settings["hooks"]["PreToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"matcher":"*","hooks":[{"type":"command","command": old.to_str().unwrap(),"onFailure":"block"}]}));
+    fs::write(
+        sb.settings(),
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
+    assert_success(&sb.run("install"));
+    let text = fs::read_to_string(sb.settings()).unwrap();
+    assert!(
+        !text.contains("/target/debug/cop-hook"),
+        "old build path replaced"
+    );
+    assert!(text.contains(".agentcop/bin/cop-hook"));
 }

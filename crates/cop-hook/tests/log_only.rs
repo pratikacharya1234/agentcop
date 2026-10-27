@@ -29,8 +29,14 @@ fn sandbox(policy_text: &str) -> Sandbox {
     let _ = fs::remove_dir_all(&root);
     let home = root.join("home");
     fs::create_dir_all(home.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        home.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     let policy = root.join("policy.toml");
     fs::write(&policy, policy_text).unwrap();
+    fs::set_permissions(&policy, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
     Sandbox { home, policy }
 }
 

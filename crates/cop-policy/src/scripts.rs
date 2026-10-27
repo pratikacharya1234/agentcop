@@ -11,7 +11,7 @@
 //!    MAX_SCRIPT_DEPTH levels; deeper asks.
 //! 6. The strictest verdict wins, and each reason names the file and line.
 
-use crate::{keep_stricter, Judge};
+use crate::{keep_stricter, Judge, SessionView};
 use cop_core::Verdict;
 use std::fs::{self, File};
 use std::io::Read;
@@ -67,7 +67,7 @@ impl Judge {
         raw: &str,
         maybe: bool,
         depth: usize,
-        written: &[String],
+        session: SessionView<'_>,
         cwd: &Path,
     ) -> Option<(Verdict, String)> {
         if depth > MAX_SCRIPT_DEPTH {
@@ -86,21 +86,26 @@ impl Judge {
             return Some((Verdict::Deny, why));
         }
         let mut result = (Verdict::Allow, "No rules matched".to_string());
-        if written.contains(&abs) {
+        if session.written.contains(&abs) {
             let why = format!("{raw}: created or changed by the agent this session; asks");
             result = keep_stricter(result, (Verdict::Ask, why));
         }
         if let Some(reason) = self.honeytoken_reason(&text) {
             result = keep_stricter(result, (Verdict::Deny, format!("{raw}: {reason}")));
         }
-        if let Some(hit) =
-            self.match_rules("Bash", &analysis.actions, &analysis.lines, Some(raw), &text)
-        {
+        if let Some(hit) = self.match_rules(
+            "Bash",
+            &analysis.actions,
+            &analysis.lines,
+            Some(raw),
+            &text,
+            session.sensitive,
+        ) {
             result = keep_stricter(result, hit);
         }
         for (i, child, child_maybe) in script_calls(&analysis.actions) {
             if let Some((verdict, reason)) =
-                self.inspect_script(child, child_maybe, depth + 1, written, cwd)
+                self.inspect_script(child, child_maybe, depth + 1, session, cwd)
             {
                 let line = analysis.lines[i];
                 result = keep_stricter(result, (verdict, format!("{raw} line {line} -> {reason}")));

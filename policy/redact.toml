@@ -1,0 +1,47 @@
+# Built-in redaction patterns (2026-10-27). Compiled into the binary, so an upgraded install never loses them.
+# A policy file can ADD [[redact]] patterns. Only `redact = "off"` in the policy removes these, and the hook
+# then prints a warning. Each match becomes [REDACTED:<name>] before anything is stored.
+
+[[redact]]
+name = "aws-access-key"
+pattern = 'AKIA[0-9A-Z]{16}'
+
+[[redact]]
+name = "github-token"
+pattern = 'gh[pousr]_[A-Za-z0-9]{20,}'
+
+[[redact]]
+name = "github-fine-grained-token"
+pattern = 'github_pat_[A-Za-z0-9_]{20,}'
+
+[[redact]]
+name = "api-key-sk"
+pattern = 'sk-[A-Za-z0-9_-]{16,}'
+
+[[redact]]
+name = "slack-token"
+pattern = 'xox[abposr]-[A-Za-z0-9-]{10,}'
+
+[[redact]]
+name = "jwt"
+pattern = 'eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}'
+
+[[redact]]
+name = "private-key-block"
+pattern = '-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)'
+
+[[redact]]
+name = "authorization-header"
+pattern = '''(?i)authorization:[^\n"''\\]*'''
+
+[[redact]]
+name = "bearer-token"
+pattern = '(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}'
+
+[[redact]]
+name = "password-or-token-value"
+pattern = '''(?i)\b(?:password|passwd|pwd|token|secret|api[_-]?key)=[^\s"''&;]+'''
+
+[[redact]]
+name = "url-userinfo"
+pattern = '''[A-Za-z][A-Za-z0-9+.-]*://[^\s/:@"'']+:[^\s/@"'']+@'''

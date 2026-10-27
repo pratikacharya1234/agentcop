@@ -98,8 +98,19 @@ fn recent_item(row: &EvidenceRecord) -> RecentItem {
     }
 }
 
+/// The built-in redaction patterns, compiled once. Every quoted field passes through them, so the detective
+/// never receives a secret even when an older store holds one (2026-10-27).
+fn redactor() -> &'static cop_core::redact::Redactor {
+    static REDACTOR: std::sync::OnceLock<cop_core::redact::Redactor> = std::sync::OnceLock::new();
+    REDACTOR.get_or_init(|| {
+        let rules = cop_policy::builtin_redact_rules().expect("built-in redaction patterns parse");
+        cop_core::redact::Redactor::new(&rules).expect("built-in redaction patterns compile")
+    })
+}
+
 fn quote(field: &str, text: &str, cap: usize) -> Quoted {
-    let (kept, truncated) = cut(text, cap);
+    let masked = redactor().text(text);
+    let (kept, truncated) = cut(&masked, cap);
     Quoted {
         field: field.to_string(),
         truncated,

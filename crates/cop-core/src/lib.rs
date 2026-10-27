@@ -44,6 +44,9 @@ pub struct Case {
     pub reason: Option<String>,
 }
 
+pub mod perms;
+pub mod redact;
+
 /// Working directory of an event. The hook keeps the `cwd` that Claude Code sends in
 /// `context["cwd"]`; without one, the hook's own working directory is used.
 pub fn event_cwd(event: &AgentEvent) -> std::path::PathBuf {

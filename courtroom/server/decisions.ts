@@ -1,13 +1,15 @@
-// Human decisions (release / convict), one hash-chained JSON line each. Append-only.
+// Human decisions (release / convict), one hash-chained row each, in the `decisions` table of state.db.
+// Append-only (2026-10-27: moved from decisions.jsonl; install imports the old file).
 //
 // PLAN:
-// 1. Each line: seq, case_id, action, at, prev (hash of the line before), hash (sha256 of prev + the fields).
-// 2. The first line's prev is 64 zeros.
-// 3. Read the whole file to get the latest state. Malformed lines are skipped and counted, never trusted.
+// 1. Each row: seq, case_id, action, at, prev (hash of the row before), hash (sha256 of prev + the fields).
+// 2. The first row's prev is 64 zeros.
+// 3. Each read and each append opens the state file, sets a busy timeout, and closes it. A missing file means none.
 
 import { createHash } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 export type Action = "release" | "convict";
 
@@ -22,31 +24,55 @@ export interface Decision {
 
 const GENESIS = "0".repeat(64);
 
+function open(path: string): DatabaseSync {
+  mkdirSync(dirname(path), { recursive: true });
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA busy_timeout = 5000");
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS decisions (seq INTEGER PRIMARY KEY, case_id TEXT NOT NULL, action TEXT NOT NULL, at TEXT NOT NULL, prev TEXT NOT NULL, hash TEXT NOT NULL)",
+  );
+  return db;
+}
+
 export function readDecisions(path: string): Decision[] {
   if (!existsSync(path)) return [];
-  const out: Decision[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      out.push(JSON.parse(line) as Decision);
-    } catch {
-      // A broken line is not a decision. Skip it.
-    }
+  const db = open(path);
+  try {
+    return db
+      .prepare("SELECT seq, case_id, action, at, prev, hash FROM decisions ORDER BY seq")
+      .all() as unknown as Decision[];
+  } finally {
+    db.close();
   }
-  return out;
 }
 
 export function appendDecision(path: string, case_id: string, action: Action): Decision {
-  const existing = readDecisions(path);
-  const last = existing[existing.length - 1];
-  const seq = (last?.seq ?? 0) + 1;
-  const prev = last?.hash ?? GENESIS;
-  const at = new Date().toISOString();
-  const hash = createHash("sha256").update(`${prev}|${seq}|${case_id}|${action}|${at}`).digest("hex");
-  const decision: Decision = { seq, case_id, action, at, prev, hash };
-  mkdirSync(dirname(path), { recursive: true });
-  appendFileSync(path, JSON.stringify(decision) + "\n");
-  return decision;
+  const db = open(path);
+  try {
+    db.exec("BEGIN IMMEDIATE");
+    const last = db.prepare("SELECT seq, hash FROM decisions ORDER BY seq DESC LIMIT 1").get() as
+      | { seq: number; hash: string }
+      | undefined;
+    const seq = (last?.seq ?? 0) + 1;
+    const prev = last?.hash ?? GENESIS;
+    const at = new Date().toISOString();
+    const hash = createHash("sha256").update(`${prev}|${seq}|${case_id}|${action}|${at}`).digest("hex");
+    db.prepare("INSERT INTO decisions (seq, case_id, action, at, prev, hash) VALUES (?, ?, ?, ?, ?, ?)").run(
+      seq,
+      case_id,
+      action,
+      at,
+      prev,
+      hash,
+    );
+    db.exec("COMMIT");
+    return { seq, case_id, action, at, prev, hash };
+  } catch (e) {
+    db.exec("ROLLBACK");
+    throw e;
+  } finally {
+    db.close();
+  }
 }
 
 /** Latest action per case, or undefined when the case is still open. */

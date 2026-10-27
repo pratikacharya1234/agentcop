@@ -24,6 +24,11 @@ fn scratch(name: &str) -> PathBuf {
         .join(format!("harden-{name}-{}-{n}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        dir.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     dir
 }
 
@@ -177,13 +182,15 @@ fn twenty_parallel_allowed_calls_keep_the_evidence_chain_valid() {
     let threads: Vec<_> = (0..20)
         .map(|_| {
             let home = home.clone();
-            std::thread::spawn(move || {
-                call(&home, "ev", "Bash", json!({ "command": "ls" }));
-            })
+            std::thread::spawn(move || call(&home, "ev", "Bash", json!({ "command": "ls" })))
         })
         .collect();
     for t in threads {
-        t.join().unwrap();
+        let (decision, reason) = t.join().unwrap();
+        assert_eq!(
+            decision, "allow",
+            "every parallel call must be judged: {reason}"
+        );
     }
     let store = EvidenceStore::new(&home.join(".agentcop/evidence.db")).unwrap();
     assert_eq!(store.count().unwrap(), 20);

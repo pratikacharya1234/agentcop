@@ -150,17 +150,20 @@ mod tests {
     fn create_test_judge() -> Judge {
         let policy = cop_policy::Policy {
             hook_guard: Default::default(),
+            redact: Default::default(),
             mode: cop_policy::Mode::Enforce,
             rules: vec![
                 cop_policy::Rule {
                     pattern: "rm.*-rf".to_string(),
                     scope: Some("bash".to_string()),
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: Some("Destructive remove".to_string()),
                 },
                 cop_policy::Rule {
                     pattern: "git.*push".to_string(),
                     scope: Some("bash".to_string()),
+                    requires_secret: false,
                     verdict: "ask".to_string(),
                     reason: Some("Requires approval".to_string()),
                 },

@@ -46,6 +46,11 @@ fn fresh_home(name: &str) -> PathBuf {
         .join(format!("case-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&home);
     fs::create_dir_all(home.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        home.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     home
 }
 

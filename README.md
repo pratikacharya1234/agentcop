@@ -65,6 +65,17 @@ Courtroom:
 cd courtroom && npm install && npm start      # prints a local URL with a random token
 ```
 
+## Locked out? Emergency steps
+
+If AgentCop refuses every tool call, the reason on screen says what is wrong and gives the exact command that fixes it. If the refusal itself blocks you, do this from a normal terminal (not from inside Claude Code):
+
+1. Remove the AgentCop hook. Open `~/.claude/settings.json` and delete the entry under `hooks.PreToolUse` whose `command` contains `cop-hook`. Or restore the backup: `cp ~/.claude/settings.json.bak ~/.claude/settings.json`.
+2. Restart Claude Code. Nothing is enforced while the hook is gone.
+3. Fix the permissions the refusal named, for example `chmod 700 ~/.agentcop` and `chmod 600 ~/.agentcop/*.db ~/.agentcop/hmac.key ~/.agentcop/policy.toml`.
+4. Run `agentcop install` again. It copies the hook to `~/.agentcop/bin`, points settings at it, and tightens the modes.
+
+An old evidence store (raw commands) is archived automatically on the next run, to `~/.agentcop/evidence-legacy.db`. Nothing is deleted. `agentcop evidence purge-legacy` deletes archives, after asking.
+
 ## Testing
 
 ```bash

@@ -7,7 +7,7 @@ import { encodePng } from "../server/png.ts";
 import { cardLines, renderMugshot } from "../server/mugshot.ts";
 import { validatePack, writeWav } from "../server/soundpack.ts";
 import { inflateSync } from "node:zlib";
-import { mkdirSync, mkdtempSync, writeFileSync, copyFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,4 +129,20 @@ test("a clip path that leaves the pack is refused, and a missing pack.json is re
 test("the built-in default pack validates", () => {
   const dir = resolve(fileURLToPath(new URL("..", import.meta.url)), "sound-packs", "default");
   expect(validatePack(dir)).toEqual([]);
+});
+
+test("courtroom redaction covers every built-in pattern name in policy/redact.toml", () => {
+  // 2026-10-27: the courtroom's list is a copy of policy/redact.toml. This fails when they drift apart.
+  const toml = readFileSync(resolve(process.cwd(), "../policy/redact.toml"), "utf8");
+  const names = [...toml.matchAll(/^name = "([^"]+)"/gm)].map((m) => m[1]);
+  expect(names.length).toBeGreaterThanOrEqual(11);
+  const source = readFileSync(resolve(process.cwd(), "server/redact.ts"), "utf8");
+  for (const name of names) {
+    expect(source, `missing ${name}`).toContain(`"${name}"`);
+  }
+});
+
+test("a fake GitHub token never survives redaction", () => {
+  const token = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+  expect(redact(`curl -H token=${token} https://x`)).not.toContain(token);
 });

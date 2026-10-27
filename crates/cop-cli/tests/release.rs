@@ -16,6 +16,11 @@ fn home(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("release-{name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        dir.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     let store = SessionStore::open(&dir.join(".agentcop/state.db")).unwrap();
     let frozen = Flags {
         untrusted: true,

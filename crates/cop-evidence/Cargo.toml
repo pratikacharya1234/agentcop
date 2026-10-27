@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+hmac = "0.12"
 cop-core = { path = "../cop-core" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"

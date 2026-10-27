@@ -21,7 +21,7 @@ import { renderMugshot } from "./mugshot.ts";
 
 export interface CourtroomOptions {
   dbPath: string;
-  decisionsPath: string;
+  statePath: string;
   port: number;
   token?: string;
   staticDir?: string;
@@ -132,7 +132,7 @@ async function recordDecision(req: IncomingMessage, res: ServerResponse, caseId:
   }
   if (action !== "release" && action !== "convict") return sendJson(res, 400, { error: "action must be release or convict" });
   if (!readCases(opts.dbPath).some((c) => c.case_id === caseId)) return sendJson(res, 404, { error: "no such case" });
-  const decision = appendDecision(opts.decisionsPath, caseId, action as Action);
+  const decision = appendDecision(opts.statePath, caseId, action as Action);
   return sendJson(res, 201, decision);
 }
 
@@ -163,7 +163,7 @@ function serveStatic(res: ServerResponse, pathname: string, staticDir: string) {
 
 /** Cases with the latest decision applied. Secrets are redacted here, so nothing downstream sees them raw. */
 function withStatus(opts: CourtroomOptions) {
-  const decided = latestByCase(readDecisions(opts.decisionsPath));
+  const decided = latestByCase(readDecisions(opts.statePath));
   return readCases(opts.dbPath).map((c) => ({
     ...c,
     command: redact(c.command),

@@ -4,8 +4,13 @@
 # Untrusted input is external data only: web results, MCP results, downloads (curl, wget), and files
 # inside a repo the session cloned. A local read, grep or listing is not untrusted.
 untrusted_tools = ["WebFetch", "WebSearch"]
-# Tools that send data out. Web reads are not external: a read is data from outside, not an action.
+# Tools that send data out, always external. Empty: nothing is external by name alone.
 external_tools = []
+# Web tools. Once the session holds a secret, they are external: a secret in the URL is data leaving.
+network_tools = ["WebFetch", "WebSearch"]
+# MCP tools whose names match one of these (case-insensitive) are external. Every MCP call is untrusted
+# input. Other MCP tools become external once the session holds a secret.
+mcp_send_patterns = ["send", "post", "create", "comment", "message", "email"]
 # Tools that read a path. A path inside a cloned repo makes the read untrusted.
 read_tools = ["Read", "Grep", "Glob"]
 # Network tools. Once the session has touched sensitive data, each of these is an external action

@@ -86,6 +86,7 @@ pub fn suggest_rule(event: &AgentEvent, case_id: &str) -> Result<Rule, String> {
     Ok(Rule {
         pattern: regex::escape(&needle),
         scope: None,
+        requires_secret: false,
         verdict: "deny".to_string(),
         reason: Some(format!("Blocked by {case_id} (agentcop fix)")),
     })

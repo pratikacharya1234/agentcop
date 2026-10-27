@@ -9,8 +9,8 @@
 //! 6. Exit code 0 (allow/ask/deny), code 2 on error (fail-closed)
 //! 7. Cold start <50ms
 
+use cop_core::redact::Redactor;
 use cop_core::{AgentEvent, Case, Verdict};
-use cop_evidence::EvidenceStore;
 use cop_policy::{Judge, Mode, Policy};
 use cop_siren::{SoundEvent, SoundPlayer};
 use cop_taint::{classify_with, step, SessionStore, TaintRules};
@@ -115,6 +115,21 @@ fn resolve_policy_path() -> Result<PathBuf, String> {
 fn run() -> Result<(), String> {
     let start = std::time::Instant::now();
 
+    // The state directory and its files must not be writable by others (item 3). Refuse otherwise.
+    let state_dir = dirs::home_dir()
+        .ok_or("Failed to find home directory")?
+        .join(".agentcop");
+    if !state_dir.exists() {
+        cop_core::perms::ensure_private_dir(&state_dir)?;
+    }
+    cop_core::perms::check_not_group_or_world_writable(&[
+        state_dir.clone(),
+        state_dir.join("evidence.db"),
+        state_dir.join("state.db"),
+        state_dir.join("hmac.key"),
+        state_dir.join("policy.toml"),
+    ])?;
+
     // Load policy from resolved path at runtime
     let policy_path = resolve_policy_path()?;
 
@@ -140,6 +155,18 @@ fn run() -> Result<(), String> {
     // Log-only: decisions are recorded, but the hook allows. Read before the policy moves into the judge.
     let log_only = policy.mode == Mode::LogOnly;
 
+    // Redaction before storage (item 3). Without patterns, nothing could be masked: refuse.
+    // Built-in patterns always apply; `redact = "off"` removes them, loudly.
+    let redactor = match policy.redact_patterns()? {
+        Some(rules) => Redactor::new(&rules)?,
+        None => {
+            eprintln!(
+                "WARNING: redact = \"off\": secrets will be stored unmasked in the evidence store"
+            );
+            Redactor::new(&[])?
+        }
+    };
+
     // Create judge from policy
     let judge = Judge::new(policy).map_err(|e| format!("Failed to create judge: {}", e))?;
 
@@ -147,15 +174,13 @@ fn run() -> Result<(), String> {
     let player = SoundPlayer::new();
 
     // Create or open evidence store
-    let evidence_dir = dirs::home_dir()
-        .ok_or("Failed to find home directory")?
-        .join(".agentcop");
-    fs::create_dir_all(&evidence_dir)
-        .map_err(|e| format!("Failed to create evidence directory: {}", e))?;
-
-    let evidence_path = evidence_dir.join("evidence.db");
-    let store = EvidenceStore::new(&evidence_path)
-        .map_err(|e| format!("Failed to open evidence store: {}", e))?;
+    let evidence_dir = state_dir;
+    // A legacy store is archived, not refused, and a new chain starts from it (2026-10-27).
+    let (store, notes) = cop_evidence::open_chain(&evidence_dir)?;
+    for note in &notes {
+        eprintln!("evidence: {note}");
+    }
+    let hmac_key = cop_evidence::load_or_create_hmac_key(&evidence_dir)?;
 
     // Read JSON from stdin
     let mut stdin_data = String::new();
@@ -202,10 +227,10 @@ fn run() -> Result<(), String> {
             // The event that completes the three properties: an external one is denied outright.
             Some(t) if now.external => (Verdict::Deny, t.clone()),
             Some(t) => {
-                let (v, r) = judge.judge_in_session(&event, &before.written);
+                let (v, r) = judge.judge_in_session(&event, session_view(&before, now.sensitive));
                 (v, format!("{t}; {r}"))
             }
-            None => judge.judge_in_session(&event, &before.written),
+            None => judge.judge_in_session(&event, session_view(&before, now.sensitive)),
         };
         (verdict, reason, true)
     };
@@ -232,14 +257,17 @@ fn run() -> Result<(), String> {
 
     // One evidence row per judged call. A blocked frozen call adds none (the counter has it).
     let case_name = if record {
+        // The HMAC is of the original input; the stored event and reason are redacted first.
+        let original_input = serde_json::to_string(&event.tool_input).unwrap_or_default();
+        let input_hmac = cop_evidence::input_hmac(&hmac_key, &original_input);
         let case = Case {
-            event,
+            event: redactor.event(&event),
             verdict,
             evidence_hash: None,
-            reason: Some(stored_reason),
+            reason: Some(redactor.text(&stored_reason)),
         };
         let row_id = store
-            .append(&case)
+            .append_with_input(&case, &input_hmac)
             .map_err(|e| format!("Failed to append to evidence: {}", e))?;
         let hash = store
             .hash_for(row_id)
@@ -291,6 +319,14 @@ fn run() -> Result<(), String> {
     );
 
     Ok(())
+}
+
+/// What the judge may see of the session: written files, and whether a secret is held (before or in this call).
+fn session_view(before: &cop_taint::Flags, now_sensitive: bool) -> cop_policy::SessionView<'_> {
+    cop_policy::SessionView {
+        written: &before.written,
+        sensitive: before.sensitive || now_sensitive,
+    }
 }
 
 fn verdict_word(verdict: Verdict) -> &'static str {

@@ -93,3 +93,4 @@
 | 0.0.11 | 2026-10-27 | C2-R3: script inspection, destructive-target asks, hook-entry guard in Rust with TOML switch |
 | 0.0.12 | 2026-10-27 | Rule of Two semantics: external-only freeze, no expiry, agentcop release, freeze counter; runner and cd/find fixes |
 | 0.0.13 | 2026-10-27 | Item 2b: GET exfiltration after a secret read, SQLite session state with transactions, evidence append transactional |
+| 0.0.14 | 2026-10-27 | Item 3: redaction before storage (built-in patterns), HMAC of raw input, legacy archive and anchored chain, explicit 0700/0600 permissions, install copies the hook |

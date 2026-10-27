@@ -36,7 +36,17 @@ impl Sandbox {
         fs::create_dir_all(root.join("work")).unwrap();
         if let Some(text) = policy {
             fs::create_dir_all(root.join("home/.agentcop")).unwrap();
+            fs::set_permissions(
+                root.join("home/.agentcop"),
+                std::os::unix::fs::PermissionsExt::from_mode(0o700),
+            )
+            .unwrap();
             fs::write(root.join("home/.agentcop/policy.toml"), text).unwrap();
+            fs::set_permissions(
+                root.join("home/.agentcop/policy.toml"),
+                std::os::unix::fs::PermissionsExt::from_mode(0o600),
+            )
+            .unwrap();
         }
         Sandbox { root }
     }

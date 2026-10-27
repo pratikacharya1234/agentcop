@@ -17,6 +17,9 @@ mod scripts;
 /// A single rule from the policy file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
+    /// The rule applies only once the session holds a secret (for example: running code after a secret read).
+    #[serde(default)]
+    pub requires_secret: bool,
     pub pattern: String,
     #[serde(default)]
     pub scope: Option<String>, // optional: limit to specific tool (e.g., "bash")
@@ -54,6 +57,58 @@ pub struct Policy {
     pub honeytokens: Vec<Honeytoken>,
     #[serde(default)]
     pub hook_guard: HookGuard,
+    /// Redaction: `[[redact]]` tables add patterns to the built-in list; `redact = "off"` removes them all.
+    #[serde(default)]
+    pub redact: RedactSetting,
+}
+
+/// What the policy says about redaction (2026-10-27): patterns are added to the built-in list, and only the
+/// explicit `off` removes it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum RedactSetting {
+    /// `redact = "off"`. Any other string is an error.
+    Off(String),
+    /// `[[redact]]` tables: extra patterns.
+    Rules(Vec<cop_core::redact::RedactRule>),
+}
+
+impl Default for RedactSetting {
+    fn default() -> Self {
+        RedactSetting::Rules(Vec::new())
+    }
+}
+
+/// The built-in redaction patterns, compiled into the binary (policy/redact.toml).
+const BUILTIN_REDACT: &str = include_str!("../../../policy/redact.toml");
+
+#[derive(Deserialize)]
+struct BuiltinRedact {
+    redact: Vec<cop_core::redact::RedactRule>,
+}
+
+/// The built-in redaction patterns.
+pub fn builtin_redact_rules() -> Result<Vec<cop_core::redact::RedactRule>, String> {
+    let file: BuiltinRedact =
+        toml::from_str(BUILTIN_REDACT).map_err(|e| format!("built-in redact patterns: {e}"))?;
+    Ok(file.redact)
+}
+
+impl Policy {
+    /// The patterns to mask: `None` when redaction is explicitly off, else the built-in list plus the policy's.
+    pub fn redact_patterns(&self) -> Result<Option<Vec<cop_core::redact::RedactRule>>, String> {
+        match &self.redact {
+            RedactSetting::Off(word) if word == "off" => Ok(None),
+            RedactSetting::Off(other) => Err(format!(
+                "redact = \"{other}\" is not valid; use redact = \"off\" or [[redact]] tables"
+            )),
+            RedactSetting::Rules(extra) => {
+                let mut all = builtin_redact_rules()?;
+                all.extend(extra.iter().cloned());
+                Ok(Some(all))
+            }
+        }
+    }
 }
 
 /// Switch and protected files for the hook-entry guard (guard.rs). Read from `[hook_guard]` in TOML.
@@ -81,9 +136,19 @@ impl Default for HookGuard {
     }
 }
 
+/// What the judge may know about the session: the files the agent wrote, and whether it holds a secret.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionView<'a> {
+    pub written: &'a [String],
+    pub sensitive: bool,
+}
+
+/// One compiled rule: (pattern, verdict, scope, reason, requires_secret).
+type CompiledRule = (Regex, String, Option<String>, Option<String>, bool);
+
 /// The judge: compiled rules ready to evaluate
 pub struct Judge {
-    compiled_rules: Vec<(Regex, String, Option<String>, Option<String>)>, // (pattern, verdict, scope, reason)
+    compiled_rules: Vec<CompiledRule>, // (pattern, verdict, scope, reason, requires_secret)
     honeytokens: Vec<(Regex, String, Option<String>)>, // (pattern, verdict, reason)
     hook_guard: HookGuard,
 }
@@ -94,7 +159,13 @@ impl Judge {
         let mut compiled_rules = Vec::new();
         for rule in policy.rules {
             let re = Regex::new(&rule.pattern)?;
-            compiled_rules.push((re, rule.verdict, rule.scope, rule.reason));
+            compiled_rules.push((
+                re,
+                rule.verdict,
+                rule.scope,
+                rule.reason,
+                rule.requires_secret,
+            ));
         }
 
         let mut honeytokens = Vec::new();
@@ -112,7 +183,13 @@ impl Judge {
 
     /// Judge an event with no session history. Scripts it runs are still inspected.
     pub fn judge(&self, event: &AgentEvent) -> (Verdict, String) {
-        self.judge_in_session(event, &[])
+        self.judge_in_session(
+            event,
+            SessionView {
+                written: &[],
+                sensitive: false,
+            },
+        )
     }
 
     /// Judge an event. `written` lists the absolute paths the agent created or changed earlier in
@@ -124,7 +201,7 @@ impl Judge {
     /// 3. The hook-entry guard (guard.rs) can deny a change to project settings.
     /// 4. Scoped Bash rules match action lines; other rules match the raw text. Strictest wins.
     /// 5. Each script the command runs is inspected (scripts.rs). Its verdict joins the strictest.
-    pub fn judge_in_session(&self, event: &AgentEvent, written: &[String]) -> (Verdict, String) {
+    pub fn judge_in_session(&self, event: &AgentEvent, session: SessionView) -> (Verdict, String) {
         let searchable = format!("{} {}", event.tool_name, event.tool_input);
         if let Some(reason) = self.honeytoken_reason(&searchable) {
             return (Verdict::Deny, reason);
@@ -134,7 +211,14 @@ impl Judge {
                 return (Verdict::Deny, reason.to_string());
             }
             return self
-                .match_rules(&event.tool_name, &[], &[], None, &searchable)
+                .match_rules(
+                    &event.tool_name,
+                    &[],
+                    &[],
+                    None,
+                    &searchable,
+                    session.sensitive,
+                )
                 .unwrap_or_else(no_rules);
         }
 
@@ -168,16 +252,17 @@ impl Judge {
                 &analysis.lines,
                 None,
                 &searchable,
+                session.sensitive,
             )
             .unwrap_or_else(no_rules);
         let cwd = cop_core::event_cwd(event);
         for (_, child, child_maybe) in scripts::script_calls(&analysis.actions) {
-            if let Some(hit) = self.inspect_script(child, child_maybe, 1, written, &cwd) {
+            if let Some(hit) = self.inspect_script(child, child_maybe, 1, session, &cwd) {
                 result = keep_stricter(result, hit);
             }
         }
         for (_, file) in scripts::runs_file_calls(&analysis.actions) {
-            if let Some(hit) = self.runs_file_verdict(file, &cwd, written) {
+            if let Some(hit) = self.runs_file_verdict(file, &cwd, session.written) {
                 result = keep_stricter(result, hit);
             }
         }
@@ -207,9 +292,14 @@ impl Judge {
         lines: &[usize],
         label: Option<&str>,
         searchable: &str,
+        session_sensitive: bool,
     ) -> Option<(Verdict, String)> {
         let mut result: Option<(Verdict, String)> = None;
-        for (pattern, verdict_str, scope, reason) in &self.compiled_rules {
+        for (pattern, verdict_str, scope, reason, requires_secret) in &self.compiled_rules {
+            // A rule that only applies once the session holds a secret (runners, package fetches).
+            if *requires_secret && !session_sensitive {
+                continue;
+            }
             // Case-insensitive: Claude Code sends "Bash", policies write "bash".
             if let Some(s) = scope {
                 if !tool.eq_ignore_ascii_case(s) {
@@ -284,35 +374,41 @@ mod tests {
     fn create_test_judge() -> Judge {
         let policy = Policy {
             hook_guard: HookGuard::default(),
+            redact: RedactSetting::default(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
                     pattern: "rm.*-rf.*/".to_string(),
                     scope: Some("bash".to_string()),
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: Some("Destructive remove on root".to_string()),
                 },
                 Rule {
                     pattern: "delete.*prod".to_string(),
                     scope: None,
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: Some("Destructive action on production".to_string()),
                 },
                 Rule {
                     pattern: "\\.env".to_string(),
                     scope: None,
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: Some("Reading secrets file".to_string()),
                 },
                 Rule {
                     pattern: "curl.*\\|.*sh".to_string(),
                     scope: None,
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: Some("Piping to shell".to_string()),
                 },
                 Rule {
                     pattern: "git.*push".to_string(),
                     scope: Some("bash".to_string()),
+                    requires_secret: false,
                     verdict: "ask".to_string(),
                     reason: Some("Pushing code".to_string()),
                 },
@@ -434,17 +530,20 @@ mod tests {
     fn strictest_wins_deny_over_ask() {
         let policy = Policy {
             hook_guard: HookGuard::default(),
+            redact: RedactSetting::default(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
                     pattern: "test".to_string(),
                     scope: None,
+                    requires_secret: false,
                     verdict: "ask".to_string(),
                     reason: None,
                 },
                 Rule {
                     pattern: "test".to_string(),
                     scope: None,
+                    requires_secret: false,
                     verdict: "deny".to_string(),
                     reason: None,
                 },
@@ -489,10 +588,12 @@ mod tests {
     fn scope_filter_works() {
         let policy = Policy {
             hook_guard: HookGuard::default(),
+            redact: RedactSetting::default(),
             mode: Mode::Enforce,
             rules: vec![Rule {
                 pattern: "git.*push".to_string(),
                 scope: Some("bash".to_string()), // Only bash scope
+                requires_secret: false,
                 verdict: "ask".to_string(),
                 reason: None,
             }],

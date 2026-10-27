@@ -23,6 +23,11 @@ fn fresh_home() -> PathBuf {
         PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("c2r-{}-{n}", std::process::id()));
     let _ = fs::remove_dir_all(&home);
     fs::create_dir_all(home.join(".agentcop")).unwrap();
+    fs::set_permissions(
+        home.join(".agentcop"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    )
+    .unwrap();
     home
 }
 
