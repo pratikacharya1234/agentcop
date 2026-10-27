@@ -47,34 +47,42 @@ impl SoundPlayer {
         }
     }
 
-    /// Play a sound event (non-blocking)
+    /// Play a sound event (non-blocking - returns immediately)
     pub fn play(&self, event: SoundEvent) {
         if !self.enabled.load(Ordering::Relaxed) || self.muted.load(Ordering::Relaxed) {
             return;
         }
 
-        let volume = *self.volume.lock();
-
-        // Spawn background thread for playback (non-blocking)
-        thread::spawn(move || {
-            Self::play_sound(event, volume);
-        });
+        // Spawn detached background thread for playback
+        // This returns immediately; the sound plays asynchronously
+        thread::Builder::new()
+            .name(format!("cop-sound-{:?}", event))
+            .spawn(move || {
+                Self::play_sound(event);
+            })
+            .ok();
+        // Ignore spawn errors (e.g., in resource-constrained environments)
     }
 
-    /// Internal sound playback (runs in background thread)
-    fn play_sound(event: SoundEvent, _volume: f32) {
-        // Simulate sound playback duration
+    /// Internal sound playback (runs in background thread, never blocks verdict)
+    fn play_sound(event: SoundEvent) {
+        // Duration for each sound effect
         let duration = match event {
-            SoundEvent::Allow => Duration::from_millis(0), // Silence
-            SoundEvent::Ask => Duration::from_millis(600), // Whistle
-            SoundEvent::Deny => Duration::from_millis(1200), // Siren + click
-            SoundEvent::Honeytoken => Duration::from_millis(1000), // Alarm
-            SoundEvent::Frozen => Duration::from_millis(800), // Cell door
-            SoundEvent::Gavel => Duration::from_millis(400), // Gavel
-            SoundEvent::CaseClosed => Duration::from_millis(1000), // Jingle
+            SoundEvent::Allow => Duration::from_millis(0), // Silence - no sound
+            SoundEvent::Ask => Duration::from_millis(600), // Police whistle
+            SoundEvent::Deny => Duration::from_millis(1200), // Siren whoop + handcuff click
+            SoundEvent::Honeytoken => Duration::from_millis(1000), // Alarm bell
+            SoundEvent::Frozen => Duration::from_millis(800), // Cell door clank
+            SoundEvent::Gavel => Duration::from_millis(400), // Gavel bang
+            SoundEvent::CaseClosed => Duration::from_millis(1000), // Case closed jingle
         };
 
-        thread::sleep(duration);
+        // In a real implementation, this would use rodio to generate/play audio
+        // For now, we sleep to simulate the sound duration (in a background thread)
+        // The key point: this runs in a background thread, so it NEVER blocks the hook's verdict return
+        if duration.as_millis() > 0 {
+            thread::sleep(duration);
+        }
     }
 
     /// Mute or unmute sounds
