@@ -15,6 +15,7 @@ members = [
   "crates/cop-pipeline",
   "crates/cop-ebpf",
   "crates/cop-family",
+  "crates/cop-syscalls",
 ]
 
 [workspace.package]
