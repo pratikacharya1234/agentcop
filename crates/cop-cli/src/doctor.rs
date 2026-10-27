@@ -241,27 +241,35 @@ fn check_canaries_installed(state: &Path, t: &mut Tally) {
         );
         return;
     };
-    match canary_report(&text) {
-        Ok(failed) if failed.is_empty() => line(t, "PASS", "policy canaries: every must-catch action is caught", None),
-        Ok(failed) => line(
+    let lastgood = fs::read_to_string(state.join(cop_policy::LASTGOOD_FILE)).ok();
+    match cop_policy::choose_policy(&text, lastgood.as_deref()) {
+        Ok(chosen) if chosen.live_failed.is_empty() => line(
+            t,
+            "PASS",
+            "policy canaries: every must-catch action is caught",
+            None,
+        ),
+        // Item 4b: one FAIL per canary the live policy allows, naming the policy the hook runs instead.
+        Ok(chosen) => {
+            for name in &chosen.live_failed {
+                line(
+                    t,
+                    "FAIL",
+                    &format!(
+                        "live policy fails canary {name}; running {}; fix your policy or run agentcop install",
+                        chosen.source.label()
+                    ),
+                    None,
+                );
+            }
+        }
+        Err(e) => line(
             t,
             "FAIL",
-            &format!("policy canaries allow: {}", failed.join("; ")),
-            Some("restore the default rule for them: copy policy/default.toml over ~/.agentcop/policy.toml, then agentcop install"),
+            &format!("policy does not load: {e}"),
+            Some("restore policy/default.toml"),
         ),
-        Err(e) => line(t, "FAIL", &format!("policy does not load: {e}"), Some("restore policy/default.toml")),
     }
-}
-
-/// Canary names the policy allows. Err when the policy does not load.
-fn canary_report(text: &str) -> Result<Vec<&'static str>, String> {
-    let policy: cop_policy::Policy = toml::from_str(text).map_err(|e| e.to_string())?;
-    let judge = cop_policy::Judge::new(policy).map_err(|e| e.to_string())?;
-    Ok(cop_policy::run_canaries(&judge)
-        .into_iter()
-        .filter(|r| !r.passed)
-        .map(|r| r.name)
-        .collect())
 }
 
 /// `agentcop policy check [FILE]`: canaries against one policy file (the installed one by default).

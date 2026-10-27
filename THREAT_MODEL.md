@@ -99,3 +99,4 @@
 | 0.0.13 | 2026-10-27 | Item 2b: GET exfiltration after a secret read, SQLite session state with transactions, evidence append transactional |
 | 0.0.14 | 2026-10-27 | Item 3: redaction before storage (built-in patterns), HMAC of raw input, legacy archive and anchored chain, explicit 0700/0600 permissions, install copies the hook |
 | 0.0.15 | 2026-10-27 | Item 4: policy canaries, agentcop doctor, SessionStart heartbeat, clean uninstall |
+| 0.0.16 | 2026-10-26 | Item 4b: when the live policy fails a canary, the hook runs the last-known-good copy, else the built-in defaults; never an empty policy |

@@ -12,10 +12,15 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 mod canary;
+mod choice;
 mod guard;
 mod scripts;
 
 pub use canary::{canaries, run_canaries, Canary, CanaryResult};
+pub use choice::{
+    builtin_text, canary_failures, choose_policy, Chosen, PolicySource, LASTGOOD_FILE,
+    LASTGOOD_HASH_FILE,
+};
 
 /// A single rule from the policy file
 #[derive(Debug, Clone, Serialize, Deserialize)]

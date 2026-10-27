@@ -11,12 +11,15 @@
 
 use cop_core::redact::Redactor;
 use cop_core::{AgentEvent, Case, Verdict};
-use cop_policy::{Judge, Mode, Policy};
+use cop_policy::{
+    choose_policy, Judge, Mode, Policy, PolicySource, LASTGOOD_FILE, LASTGOOD_HASH_FILE,
+};
 use cop_siren::{SoundEvent, SoundPlayer};
 use cop_taint::{classify_with, step, SessionStore, TaintRules};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
@@ -138,22 +141,26 @@ fn run() -> Result<(), String> {
     // Load policy from resolved path at runtime
     let policy_path = resolve_policy_path()?;
 
-    let policy_toml =
+    let live_text =
         fs::read_to_string(&policy_path).map_err(|e| format!("Failed to read policy: {}", e))?;
-    let policy_hash = format!(
-        "{:x}",
-        <sha2::Sha256 as sha2::Digest>::digest(policy_toml.as_bytes())
-    );
-    let policy: Policy =
-        toml::from_str(&policy_toml).map_err(|e| format!("Failed to parse policy: {}", e))?;
+    let policy_hash = sha256_hex(&live_text);
 
-    // Fail closed: a policy with no rules and no honeytokens would allow everything
-    if policy.rules.is_empty() && policy.honeytokens.is_empty() {
+    // Fail closed: a live policy with no rules and no honeytokens would allow everything. That is an error,
+    // not a fallback: the live file is broken and the user must see it.
+    let live: Policy =
+        toml::from_str(&live_text).map_err(|e| format!("Failed to parse policy: {}", e))?;
+    if live.rules.is_empty() && live.honeytokens.is_empty() {
         return Err(format!(
             "Policy {} loaded zero rules; refusing to allow everything",
             policy_path.display()
         ));
     }
+
+    // Item 4b: the live policy runs only while it passes the canaries. Otherwise last-known-good, then defaults.
+    let lastgood = fs::read_to_string(state_dir.join(LASTGOOD_FILE)).ok();
+    let chosen = choose_policy(&live_text, lastgood.as_deref())?;
+    let policy: Policy =
+        toml::from_str(&chosen.text).map_err(|e| format!("Failed to parse policy: {}", e))?;
     eprintln!(
         "Policy loaded: {} ({} rules, {} honeytokens)",
         policy_path.display(),
@@ -190,7 +197,14 @@ fn run() -> Result<(), String> {
         eprintln!("evidence: {note}");
     }
     let hmac_key = cop_evidence::load_or_create_hmac_key(&evidence_dir)?;
-    check_policy_canaries(&judge, &evidence_dir, &store, &hmac_key, &policy_hash);
+    check_policy_canaries(
+        &chosen,
+        &live_text,
+        &evidence_dir,
+        &store,
+        &hmac_key,
+        &policy_hash,
+    );
 
     // Read JSON from stdin
     let mut stdin_data = String::new();
@@ -355,29 +369,32 @@ fn verdict_word(verdict: Verdict) -> &'static str {
     }
 }
 
-/// Policy canaries when the policy file changes (2026-10-27). The hash of the last checked policy is kept in
-/// canary.sha256. A failing canary is a loud warning and one evidence row per change. Judging continues.
+/// Policy canaries when the policy file changes (2026-10-27, item 4b 2026-10-26). The hash of the last checked live
+/// policy is kept in canary.sha256. A live policy that fails a canary gets one loud warning and one evidence row
+/// per change, and the hook runs the policy it chose instead (last-known-good or defaults). A live policy that
+/// passes is saved as last-known-good.
 fn check_policy_canaries(
-    judge: &Judge,
+    chosen: &cop_policy::Chosen,
+    live_text: &str,
     state_dir: &std::path::Path,
     store: &cop_evidence::EvidenceStore,
     hmac_key: &[u8],
     policy_hash: &str,
 ) {
+    if chosen.source == PolicySource::Live {
+        save_last_known_good(state_dir, live_text, policy_hash);
+    }
     let file = state_dir.join("canary.sha256");
     if fs::read_to_string(&file).unwrap_or_default().trim() == policy_hash {
         return;
     }
-    let failed: Vec<&str> = cop_policy::run_canaries(judge)
-        .iter()
-        .filter(|r| !r.passed)
-        .map(|r| r.name)
-        .collect();
-    if !failed.is_empty() {
+    if !chosen.live_failed.is_empty() {
+        let failed = &chosen.live_failed;
         eprintln!(
-            "WARNING: the loaded policy allows {} canary action(s): {}. Run `agentcop doctor`.",
+            "WARNING: the loaded policy allows {} canary action(s): {}. Running the {} policy instead. Run `agentcop doctor`.",
             failed.len(),
-            failed.join("; ")
+            failed.join("; "),
+            chosen.source.label()
         );
         let event = AgentEvent {
             hook_event_name: "PolicyCheck".to_string(),
@@ -385,7 +402,7 @@ fn check_policy_canaries(
             session_id: None,
             user_id: None,
             tool_name: "agentcop policy".to_string(),
-            tool_input: serde_json::json!({ "allowed_canaries": failed }),
+            tool_input: serde_json::json!({ "allowed_canaries": failed, "running": chosen.source.label() }),
             context: Default::default(),
         };
         let original = serde_json::to_string(&event.tool_input).unwrap_or_default();
@@ -394,7 +411,11 @@ fn check_policy_canaries(
             event,
             verdict: Verdict::Allow,
             evidence_hash: None,
-            reason: Some(format!("policy canaries allowed: {}", failed.join("; "))),
+            reason: Some(format!(
+                "policy canaries allowed: {}; running {}",
+                failed.join("; "),
+                chosen.source.label()
+            )),
         };
         if let Err(e) = store.append_with_input(&case, &hmac) {
             eprintln!("evidence: could not record the canary warning: {e}");
@@ -403,6 +424,46 @@ fn check_policy_canaries(
     if fs::write(&file, policy_hash).is_ok() {
         let _ = cop_core::perms::secure_file(&file);
     }
+}
+
+/// Save a passing live policy as last-known-good, with its hash (item 4b). Written 0600 through a temp file, so a
+/// crash never leaves half a policy. A failure is printed, never fatal: the live policy still runs.
+fn save_last_known_good(state_dir: &std::path::Path, live_text: &str, policy_hash: &str) {
+    let saved_hash = state_dir.join(LASTGOOD_HASH_FILE);
+    if fs::read_to_string(&saved_hash).unwrap_or_default().trim() == policy_hash {
+        return;
+    }
+    let result = write_private_file(&state_dir.join(LASTGOOD_FILE), live_text)
+        .and_then(|_| write_private_file(&saved_hash, policy_hash));
+    if let Err(e) = result {
+        eprintln!("policy: could not save last-known-good: {e}");
+    }
+}
+
+/// Write a file through a temp name, then rename it into place. The temp file is created 0600, so the content is
+/// never readable by others, whatever the umask.
+fn write_private_file(path: &std::path::Path, text: &str) -> Result<(), String> {
+    let mut tmp_name = path.as_os_str().to_owned();
+    tmp_name.push(".tmp");
+    let tmp = PathBuf::from(tmp_name);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(|e| format!("create {}: {e}", tmp.display()))?;
+    file.write_all(text.as_bytes())
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    cop_core::perms::secure_file(&tmp)?;
+    fs::rename(&tmp, path).map_err(|e| format!("rename into {}: {e}", path.display()))
+}
+
+fn sha256_hex(text: &str) -> String {
+    format!(
+        "{:x}",
+        <sha2::Sha256 as sha2::Digest>::digest(text.as_bytes())
+    )
 }
 
 /// SessionStart (2026-10-27): one evidence row per Claude Code session start, so a silent day is "no activity",

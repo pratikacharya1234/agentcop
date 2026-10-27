@@ -275,6 +275,7 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
         ensure_private_dir(state)?;
         fs::write(&path, &text).map_err(|e| format!("write policy: {e}"))?;
         set_mode(&path, 0o600)?;
+        save_last_known_good(state, &text)?;
         return Ok(Some(format!(
             "Installed default policy to {}",
             path.display()
@@ -283,6 +284,9 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
     let old = fs::read_to_string(&path).map_err(|e| format!("read policy: {e}"))?;
     let new = merged_policy(&old)?;
     canary_gate(&new)?;
+    if !dry_run {
+        save_last_known_good(state, &new)?;
+    }
     if new == old {
         println!("policy: up to date ({})", path.display());
         return Ok(None);
@@ -306,6 +310,19 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
         "Updated policy; backup at {}",
         backup.display()
     )))
+}
+
+/// Item 4b: a policy that passed the canary gate becomes the last-known-good copy, with its hash. Both files 0600.
+/// The hook runs this copy when the live policy fails a canary.
+fn save_last_known_good(state: &Path, text: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    let text_path = state.join(cop_policy::LASTGOOD_FILE);
+    let hash_path = state.join(cop_policy::LASTGOOD_HASH_FILE);
+    fs::write(&text_path, text).map_err(|e| format!("write last-known-good: {e}"))?;
+    set_mode(&text_path, 0o600)?;
+    fs::write(&hash_path, format!("{:x}", Sha256::digest(text.as_bytes())))
+        .map_err(|e| format!("write last-known-good hash: {e}"))?;
+    set_mode(&hash_path, 0o600)
 }
 
 /// The new default policy, with the user's mode, custom rules, honeytokens, redact tables and hook_guard kept.
