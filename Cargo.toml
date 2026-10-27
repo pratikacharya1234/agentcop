@@ -6,6 +6,7 @@ members = [
   "crates/cop-evidence",
   "crates/cop-hook",
   "crates/cop-cli",
+  "crates/cop-siren",
 ]
 
 [workspace.package]
