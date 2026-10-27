@@ -4,7 +4,8 @@
 //! 1. verify: the current chain must verify; it reports its anchor (the archive it continues from, if any).
 //! 2. verify also reports the newest archive: its final hash, and whether the current chain's anchor matches it.
 //! 3. archive-legacy: the same archiving the hook does on its own (for a manual run). It never deletes anything.
-//! 4. purge-legacy: lists the archives (raw commands) and asks before deleting anything.
+//! 4. purge-legacy: lists the archives (raw commands: evidence-legacy*.db and evidence-interim-*.db), with sizes,
+//!    and asks before deleting anything (2026-10-27).
 
 use cop_evidence::{final_hash, latest_archive, open_chain, EvidenceStore};
 use std::fs;
@@ -76,14 +77,15 @@ pub fn archive_legacy() -> Result<(), String> {
 
 pub fn purge_legacy() -> Result<(), String> {
     let dir = state_dir()?;
-    let archives = archives(&dir);
+    let archives = raw_archives(&dir);
     if archives.is_empty() {
         println!("No archived evidence to purge.");
         return Ok(());
     }
-    println!("These archives hold raw commands and will be deleted permanently:");
+    println!("These files hold raw commands and will be deleted permanently:");
     for a in &archives {
-        println!("  {}", a.display());
+        let kb = fs::metadata(a).map(|m| m.len() / 1024).unwrap_or(0);
+        println!("  {} ({} KB)", a.display(), kb);
     }
     print!("Delete them? [y/N] ");
     io::stdout().flush().map_err(|e| e.to_string())?;
@@ -110,16 +112,17 @@ pub fn purge_legacy() -> Result<(), String> {
     Ok(())
 }
 
-/// Every evidence-legacy*.db in the folder.
-fn archives(dir: &Path) -> Vec<PathBuf> {
+/// Every archive that holds raw commands: evidence-legacy*.db and evidence-interim-*.db (2026-10-27).
+pub fn raw_archives(dir: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = fs::read_dir(dir)
         .into_iter()
         .flatten()
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("evidence-legacy") && n.ends_with(".db"))
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+                (n.starts_with("evidence-legacy") || n.starts_with("evidence-interim"))
+                    && n.ends_with(".db")
+            })
         })
         .collect();
     out.sort();

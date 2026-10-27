@@ -59,6 +59,14 @@ python3 tests/attacks/run_attacks.py || {
 }
 echo "✓ Internal Affairs passed (results in docs/internal-affairs.md)"
 
+# Policy canaries (item 4, 2026-10-27): the shipped policy must catch every must-catch action.
+echo "Running policy canaries..."
+cargo run -q -p cop-cli -- policy check policy/default.toml || {
+    echo "❌ Policy canaries failed: the shipped policy allows a must-catch action"
+    exit 2
+}
+echo "✓ Policy canaries passed"
+
 echo ""
 echo "✓✓✓ All checks passed ✓✓✓"
 exit 0

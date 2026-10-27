@@ -36,6 +36,11 @@ struct HookResponse {
 }
 
 fn main() {
+    // `cop-hook --version` (2026-10-27): the doctor compares it with the CLI. It never reads stdin.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("cop-hook {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     // Exit code 2 on any error (fail-closed)
     if let Err(e) = run() {
         eprintln!("Error: {}", e);
@@ -135,6 +140,10 @@ fn run() -> Result<(), String> {
 
     let policy_toml =
         fs::read_to_string(&policy_path).map_err(|e| format!("Failed to read policy: {}", e))?;
+    let policy_hash = format!(
+        "{:x}",
+        <sha2::Sha256 as sha2::Digest>::digest(policy_toml.as_bytes())
+    );
     let policy: Policy =
         toml::from_str(&policy_toml).map_err(|e| format!("Failed to parse policy: {}", e))?;
 
@@ -181,12 +190,21 @@ fn run() -> Result<(), String> {
         eprintln!("evidence: {note}");
     }
     let hmac_key = cop_evidence::load_or_create_hmac_key(&evidence_dir)?;
+    check_policy_canaries(&judge, &evidence_dir, &store, &hmac_key, &policy_hash);
 
     // Read JSON from stdin
     let mut stdin_data = String::new();
     io::stdin()
         .read_to_string(&mut stdin_data)
         .map_err(|e| format!("Failed to read stdin: {}", e))?;
+
+    // SessionStart is a heartbeat, not a verdict (2026-10-27). It writes one row and prints nothing.
+    if let Ok(start) = serde_json::from_str::<serde_json::Value>(&stdin_data) {
+        if start["hook_event_name"].as_str() == Some("SessionStart") {
+            record_heartbeat(&store, &hmac_key, &start);
+            return Ok(());
+        }
+    }
 
     // Parse as AgentEvent. Claude Code sends the working directory as `cwd`; it is kept in the context.
     let mut event: AgentEvent =
@@ -334,6 +352,90 @@ fn verdict_word(verdict: Verdict) -> &'static str {
         Verdict::Allow => "allow",
         Verdict::Ask => "ask",
         Verdict::Deny => "deny",
+    }
+}
+
+/// Policy canaries when the policy file changes (2026-10-27). The hash of the last checked policy is kept in
+/// canary.sha256. A failing canary is a loud warning and one evidence row per change. Judging continues.
+fn check_policy_canaries(
+    judge: &Judge,
+    state_dir: &std::path::Path,
+    store: &cop_evidence::EvidenceStore,
+    hmac_key: &[u8],
+    policy_hash: &str,
+) {
+    let file = state_dir.join("canary.sha256");
+    if fs::read_to_string(&file).unwrap_or_default().trim() == policy_hash {
+        return;
+    }
+    let failed: Vec<&str> = cop_policy::run_canaries(judge)
+        .iter()
+        .filter(|r| !r.passed)
+        .map(|r| r.name)
+        .collect();
+    if !failed.is_empty() {
+        eprintln!(
+            "WARNING: the loaded policy allows {} canary action(s): {}. Run `agentcop doctor`.",
+            failed.len(),
+            failed.join("; ")
+        );
+        let event = AgentEvent {
+            hook_event_name: "PolicyCheck".to_string(),
+            timestamp: String::new(),
+            session_id: None,
+            user_id: None,
+            tool_name: "agentcop policy".to_string(),
+            tool_input: serde_json::json!({ "allowed_canaries": failed }),
+            context: Default::default(),
+        };
+        let original = serde_json::to_string(&event.tool_input).unwrap_or_default();
+        let hmac = cop_evidence::input_hmac(hmac_key, &original);
+        let case = Case {
+            event,
+            verdict: Verdict::Allow,
+            evidence_hash: None,
+            reason: Some(format!("policy canaries allowed: {}", failed.join("; "))),
+        };
+        if let Err(e) = store.append_with_input(&case, &hmac) {
+            eprintln!("evidence: could not record the canary warning: {e}");
+        }
+    }
+    if fs::write(&file, policy_hash).is_ok() {
+        let _ = cop_core::perms::secure_file(&file);
+    }
+}
+
+/// SessionStart (2026-10-27): one evidence row per Claude Code session start, so a silent day is "no activity",
+/// not "hook dead". Never blocks the session: a failure is printed to stderr only.
+fn record_heartbeat(
+    store: &cop_evidence::EvidenceStore,
+    hmac_key: &[u8],
+    start: &serde_json::Value,
+) {
+    let source = start["source"].as_str().unwrap_or("unknown").to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let event = AgentEvent {
+        hook_event_name: "SessionStart".to_string(),
+        timestamp: format!("unix:{now}"),
+        session_id: start["session_id"].as_str().map(str::to_string),
+        user_id: None,
+        tool_name: "session".to_string(),
+        tool_input: serde_json::json!({ "source": source }),
+        context: Default::default(),
+    };
+    let original = serde_json::to_string(&event.tool_input).unwrap_or_default();
+    let hmac = cop_evidence::input_hmac(hmac_key, &original);
+    let case = Case {
+        event,
+        verdict: Verdict::Allow,
+        evidence_hash: None,
+        reason: Some(format!("session start heartbeat ({source})")),
+    };
+    if let Err(e) = store.append_with_input(&case, &hmac) {
+        eprintln!("heartbeat: could not record the session start: {e}");
     }
 }
 

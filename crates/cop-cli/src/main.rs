@@ -8,6 +8,7 @@
 //! 5. Implement cases: list evidence (stub for A6)
 //! 6. Support --dry-run, idempotent operations
 
+mod doctor;
 mod evidence_cmd;
 mod fix;
 mod install;
@@ -15,8 +16,6 @@ mod release;
 
 use clap::{Parser, Subcommand};
 use cop_evidence::EvidenceStore;
-use std::fs;
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "agentcop")]
@@ -24,6 +23,15 @@ use std::path::PathBuf;
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+#[derive(Subcommand)]
+enum PolicyCommand {
+    /// Run the must-catch canaries against a policy file (default: the installed one). Exit 1 if any is allowed
+    Check {
+        /// Policy file to check
+        file: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -42,8 +50,19 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Uninstall agentcop from Claude Code
-    Uninstall,
+    /// Remove our hook entries from Claude Code. Evidence stays unless --purge (asks first)
+    Uninstall {
+        /// Also delete ~/.agentcop: evidence, archives, policy and keys
+        #[arg(long)]
+        purge: bool,
+    },
+    /// One health check: modes, hook path, binary, canaries, chain, heartbeat, mode, archives
+    Doctor,
+    /// Policy tools
+    Policy {
+        #[command(subcommand)]
+        action: PolicyCommand,
+    },
     /// Verify evidence chain integrity
     Verify,
     /// List recent cases
@@ -77,7 +96,11 @@ fn main() {
 fn run(cli: Cli) -> Result<(), String> {
     match cli.command {
         Commands::Install { dry_run } => install::run(dry_run),
-        Commands::Uninstall => uninstall(),
+        Commands::Uninstall { purge } => install::uninstall(purge),
+        Commands::Doctor => doctor::run(),
+        Commands::Policy { action } => match action {
+            PolicyCommand::Check { file } => doctor::policy_check(file),
+        },
         Commands::Verify => evidence_cmd::verify(),
         Commands::Cases => cases(),
         Commands::Evidence { action } => match action {
@@ -87,31 +110,6 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Fix { case_id } => fix::run(&case_id),
         Commands::Release { session } => release::run(&session),
     }
-}
-
-fn uninstall() -> Result<(), String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to find home directory")?;
-    let settings_path = if let Ok(cwd) = std::env::current_dir() {
-        let project_settings = cwd.join(".claude/settings.json");
-        if project_settings.exists() {
-            project_settings
-        } else {
-            home_dir.join(".claude/settings.json")
-        }
-    } else {
-        home_dir.join(".claude/settings.json")
-    };
-    let backup_path = format!("{}.bak", settings_path.display());
-
-    if !PathBuf::from(&backup_path).exists() {
-        return Err("No backup found. Was agentcop ever installed?".to_string());
-    }
-
-    fs::copy(&backup_path, &settings_path).map_err(|e| format!("Failed to restore: {}", e))?;
-
-    println!("Uninstalled cop-hook from Claude Code");
-    println!("Settings restored from: {}", backup_path);
-    Ok(())
 }
 
 fn cases() -> Result<(), String> {

@@ -11,6 +11,10 @@
 //! 5. Existing state is tightened: folders 0700, files 0600.
 //! 6. Legacy JSON (sessions/*.json, decisions.jsonl) is imported into state.db, then moved to legacy/.
 //!
+//! 7. Policy canaries (2026-10-27): the policy that would be installed must not allow any canary action
+//!    (cop_policy::canaries). If one is allowed, install prints the names and refuses, before any write.
+//! 8. The hook is registered for PreToolUse (every tool call) and SessionStart (one heartbeat row per session).
+//!
 //! `--dry-run` prints each step and changes nothing.
 
 use cop_core::perms::{ensure_private_dir, set_mode};
@@ -21,7 +25,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The default policy, compiled in, so `install` works from any directory.
-const DEFAULT_POLICY: &str = include_str!("../../../policy/default.toml");
+/// `AGENTCOP_DEFAULT_POLICY` (a file path) replaces it. It exists for tests of the canary gate; the gate applies
+/// to whatever it reads.
+const COMPILED_POLICY: &str = include_str!("../../../policy/default.toml");
+
+fn default_policy() -> Result<String, String> {
+    match std::env::var("AGENTCOP_DEFAULT_POLICY") {
+        Ok(path) => fs::read_to_string(&path).map_err(|e| format!("AGENTCOP_DEFAULT_POLICY: {e}")),
+        Err(_) => Ok(COMPILED_POLICY.to_string()),
+    }
+}
+
+/// The hook events AgentCop registers (2026-10-27).
+const EVENTS: [&str; 2] = ["PreToolUse", "SessionStart"];
 
 pub fn run(dry_run: bool) -> Result<(), String> {
     let home = dirs::home_dir().ok_or("Failed to find home directory")?;
@@ -39,12 +55,13 @@ pub fn run(dry_run: bool) -> Result<(), String> {
     let mut settings: Value = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse settings.json: {e}"))?;
     let bin_text = bin.to_string_lossy().into_owned();
-    let changed = if has_cop_hook(&settings) {
-        point_hooks_at(&mut settings, &bin_text) > 0
-    } else {
-        add_cop_hook(&mut settings, &bin_text)?;
-        true
-    };
+    let mut changed = point_hooks_at(&mut settings, &bin_text) > 0;
+    for event in EVENTS {
+        if !event_has_cop_hook(&settings, event) {
+            add_cop_hook(&mut settings, event, &bin_text)?;
+            changed = true;
+        }
+    }
 
     println!("hook copy: {} -> {}", source.display(), bin.display());
     println!(
@@ -91,7 +108,7 @@ pub fn run(dry_run: bool) -> Result<(), String> {
 }
 
 /// Settings file: the project's .claude/settings.json if it exists, else ~/.claude/settings.json.
-fn settings_path(home: &Path) -> Result<PathBuf, String> {
+pub fn settings_path(home: &Path) -> Result<PathBuf, String> {
     let project = std::env::current_dir()
         .ok()
         .map(|c| c.join(".claude/settings.json"));
@@ -116,36 +133,41 @@ fn hook_source() -> Result<PathBuf, String> {
         .map_err(|e| format!("cop-hook not found at {}: {e}", candidate.display()))
 }
 
-/// True if any hooks.PreToolUse matcher group already runs cop-hook.
-pub fn has_cop_hook(settings: &Value) -> bool {
-    settings["hooks"]["PreToolUse"]
-        .as_array()
-        .is_some_and(|groups| {
-            groups.iter().any(|group| {
-                group["hooks"].as_array().is_some_and(|hooks| {
-                    hooks.iter().any(|h| {
-                        h["command"]
-                            .as_str()
-                            .is_some_and(|c| c.contains("cop-hook"))
-                    })
+/// True if any matcher group under `event` already runs cop-hook.
+fn event_has_cop_hook(settings: &Value, event: &str) -> bool {
+    settings["hooks"][event].as_array().is_some_and(|groups| {
+        groups.iter().any(|group| {
+            group["hooks"].as_array().is_some_and(|hooks| {
+                hooks.iter().any(|h| {
+                    h["command"]
+                        .as_str()
+                        .is_some_and(|c| c.contains("cop-hook"))
                 })
             })
         })
+    })
 }
 
-/// Point every cop-hook command at `bin`. Returns how many changed.
+/// Point every cop-hook command, under every event, at `bin`. Returns how many changed.
 fn point_hooks_at(settings: &mut Value, bin: &str) -> usize {
     let mut changed = 0;
-    if let Some(groups) = settings["hooks"]["PreToolUse"].as_array_mut() {
-        for group in groups {
-            if let Some(hooks) = group["hooks"].as_array_mut() {
-                for hook in hooks {
-                    let is_ours = hook["command"]
-                        .as_str()
-                        .is_some_and(|c| c.contains("cop-hook"));
-                    if is_ours && hook["command"].as_str() != Some(bin) {
-                        hook["command"] = json!(bin);
-                        changed += 1;
+    for event in EVENTS {
+        // get_mut, not settings["hooks"][event]: IndexMut would insert a null for a missing key.
+        let groups = settings
+            .get_mut("hooks")
+            .and_then(|h| h.get_mut(event))
+            .and_then(|g| g.as_array_mut());
+        if let Some(groups) = groups {
+            for group in groups {
+                if let Some(hooks) = group["hooks"].as_array_mut() {
+                    for hook in hooks {
+                        let is_ours = hook["command"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("cop-hook"));
+                        if is_ours && hook["command"].as_str() != Some(bin) {
+                            hook["command"] = json!(bin);
+                            changed += 1;
+                        }
                     }
                 }
             }
@@ -154,8 +176,9 @@ fn point_hooks_at(settings: &mut Value, bin: &str) -> usize {
     changed
 }
 
-/// Append our matcher group to hooks.PreToolUse, creating the keys if needed.
-fn add_cop_hook(settings: &mut Value, hook_path: &str) -> Result<(), String> {
+/// Append our matcher group under `event`, creating the keys if needed. PreToolUse fails closed (block);
+/// SessionStart is a heartbeat and never blocks a session.
+fn add_cop_hook(settings: &mut Value, event: &str, hook_path: &str) -> Result<(), String> {
     let root = settings
         .as_object_mut()
         .ok_or("settings.json must contain a JSON object")?;
@@ -164,26 +187,84 @@ fn add_cop_hook(settings: &mut Value, hook_path: &str) -> Result<(), String> {
         .or_insert_with(|| json!({}))
         .as_object_mut()
         .ok_or("settings.json \"hooks\" must be an object")?;
-    let pre_tool_use = hooks
-        .entry("PreToolUse")
+    let groups = hooks
+        .entry(event)
         .or_insert_with(|| json!([]))
         .as_array_mut()
-        .ok_or("settings.json \"hooks.PreToolUse\" must be an array")?;
-    pre_tool_use.push(json!({
-        "matcher": "*",
-        "hooks": [{
-            "type": "command",
-            "command": hook_path,
-            "onFailure": "block"
-        }]
-    }));
+        .ok_or_else(|| format!("settings.json \"hooks.{event}\" must be an array"))?;
+    let entry = if event == "PreToolUse" {
+        json!({ "type": "command", "command": hook_path, "onFailure": "block" })
+    } else {
+        json!({ "type": "command", "command": hook_path })
+    };
+    groups.push(json!({ "matcher": "*", "hooks": [entry] }));
     Ok(())
+}
+
+/// Remove every matcher group that runs cop-hook, under every event. Other hooks are kept. Returns how many
+/// cop-hook commands were removed.
+fn remove_cop_hooks(settings: &mut Value) -> usize {
+    let mut removed = 0;
+    // get_mut, not settings["hooks"]: IndexMut would insert a null "hooks" key into a file that has none.
+    let Some(hooks) = settings.get_mut("hooks").and_then(|h| h.as_object_mut()) else {
+        return 0;
+    };
+    for event in EVENTS {
+        let Some(groups) = hooks.get_mut(event).and_then(|g| g.as_array_mut()) else {
+            continue;
+        };
+        for group in groups.iter_mut() {
+            if let Some(list) = group["hooks"].as_array_mut() {
+                let before = list.len();
+                list.retain(|h| {
+                    !h["command"]
+                        .as_str()
+                        .is_some_and(|c| c.contains("cop-hook"))
+                });
+                removed += before - list.len();
+            }
+        }
+        groups.retain(|g| g["hooks"].as_array().is_none_or(|l| !l.is_empty()));
+        if groups.is_empty() {
+            hooks.remove(event);
+        }
+    }
+    if hooks.is_empty() {
+        settings.as_object_mut().map(|o| o.remove("hooks"));
+    }
+    removed
+}
+
+/// Refuse a policy that allows any canary action. Prints the names; writes nothing.
+fn canary_gate(text: &str) -> Result<(), String> {
+    let policy: cop_policy::Policy =
+        toml::from_str(text).map_err(|e| format!("policy does not load: {e}"))?;
+    let judge =
+        cop_policy::Judge::new(policy).map_err(|e| format!("policy does not compile: {e}"))?;
+    let allowed: Vec<&str> = cop_policy::run_canaries(&judge)
+        .into_iter()
+        .filter(|r| !r.passed)
+        .map(|r| r.name)
+        .collect();
+    if allowed.is_empty() {
+        return Ok(());
+    }
+    for name in &allowed {
+        eprintln!("WARNING: canary allowed: {name}");
+    }
+    Err(format!(
+        "refusing to install this policy: it allows {} canary action(s): {}. Restore the default rule for them (copy policy/default.toml).",
+        allowed.len(),
+        allowed.join("; ")
+    ))
 }
 
 /// Policy update. Returns a note when the policy was written (None when nothing changed or on dry run).
 fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> {
     let path = state.join("policy.toml");
     if !path.exists() {
+        let text = default_policy()?;
+        canary_gate(&text)?;
         println!(
             "policy: will install the default policy to {}",
             path.display()
@@ -192,7 +273,7 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
             return Ok(None);
         }
         ensure_private_dir(state)?;
-        fs::write(&path, DEFAULT_POLICY).map_err(|e| format!("write policy: {e}"))?;
+        fs::write(&path, &text).map_err(|e| format!("write policy: {e}"))?;
         set_mode(&path, 0o600)?;
         return Ok(Some(format!(
             "Installed default policy to {}",
@@ -201,6 +282,7 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
     }
     let old = fs::read_to_string(&path).map_err(|e| format!("read policy: {e}"))?;
     let new = merged_policy(&old)?;
+    canary_gate(&new)?;
     if new == old {
         println!("policy: up to date ({})", path.display());
         return Ok(None);
@@ -231,8 +313,9 @@ fn policy_update(state: &Path, dry_run: bool) -> Result<Option<String>, String> 
 fn merged_policy(old: &str) -> Result<String, String> {
     let user: toml::Table =
         toml::from_str(old).map_err(|e| format!("current policy does not parse: {e}"))?;
+    let default_text = default_policy()?;
     let default: toml::Table =
-        toml::from_str(DEFAULT_POLICY).map_err(|e| format!("default policy: {e}"))?;
+        toml::from_str(&default_text).map_err(|e| format!("default policy: {e}"))?;
     let default_patterns = |key: &str| -> HashSet<String> {
         default
             .get(key)
@@ -285,7 +368,7 @@ fn merged_policy(old: &str) -> Result<String, String> {
         .get("mode")
         .and_then(|v| v.as_str())
         .unwrap_or("enforce");
-    let mut text = DEFAULT_POLICY.replacen("mode = \"enforce\"", &format!("mode = \"{mode}\""), 1);
+    let mut text = default_text.replacen("mode = \"enforce\"", &format!("mode = \"{mode}\""), 1);
     if !extras.is_empty() {
         text.push_str("\n# Your settings, kept by `agentcop install`.\n");
         text.push_str(
@@ -402,4 +485,69 @@ fn unix_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// `agentcop uninstall` (2026-10-27). Removes only our hook entries. If that leaves exactly the backup's content,
+/// the backup's bytes are restored. Evidence and state stay, unless `--purge` (which asks first).
+pub fn uninstall(purge: bool) -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("Failed to find home directory")?;
+    let state = home.join(".agentcop");
+    let settings_path = settings_path(&home)?;
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("read {}: {e}", settings_path.display()))?;
+    let mut settings: Value =
+        serde_json::from_str(&content).map_err(|e| format!("parse settings.json: {e}"))?;
+    let removed = remove_cop_hooks(&mut settings);
+    let backup = PathBuf::from(format!("{}.bak", settings_path.display()));
+    let original_text = fs::read_to_string(&backup).ok();
+    let original_value: Option<Value> = original_text
+        .as_deref()
+        .and_then(|t| serde_json::from_str(t).ok());
+    if removed == 0 {
+        println!(
+            "No AgentCop hook entries found in {}",
+            settings_path.display()
+        );
+    } else if original_value.as_ref() == Some(&settings) {
+        fs::write(&settings_path, original_text.unwrap_or_default())
+            .map_err(|e| format!("restore settings: {e}"))?;
+        println!(
+            "Removed {removed} AgentCop hook entries; settings are byte-identical to the backup."
+        );
+    } else {
+        let text =
+            serde_json::to_string_pretty(&settings).map_err(|e| format!("JSON error: {e}"))?;
+        fs::write(&settings_path, text).map_err(|e| format!("write settings: {e}"))?;
+        println!(
+            "Removed {removed} AgentCop hook entries. The rest of the file is kept as it is now; the backup differs, so it was not restored."
+        );
+    }
+    let bin = state.join("bin").join("cop-hook");
+    if bin.exists() {
+        fs::remove_file(&bin).map_err(|e| format!("remove {}: {e}", bin.display()))?;
+        println!("Removed the hook copy {}", bin.display());
+    }
+    if purge {
+        println!(
+            "--purge deletes ALL AgentCop state: evidence, archives, policy and keys ({}).",
+            state.display()
+        );
+        print!("Delete it? [y/N] ");
+        std::io::Write::flush(&mut std::io::stdout()).map_err(|e| e.to_string())?;
+        let mut answer = String::new();
+        std::io::BufRead::read_line(&mut std::io::stdin().lock(), &mut answer)
+            .map_err(|e| format!("read answer: {e}"))?;
+        if matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            fs::remove_dir_all(&state).map_err(|e| format!("remove {}: {e}", state.display()))?;
+            println!("Deleted {}", state.display());
+        } else {
+            println!("Nothing deleted. Evidence stays in {}", state.display());
+        }
+    } else if state.exists() {
+        println!(
+            "Evidence and state stay in {} (use --purge to delete them).",
+            state.display()
+        );
+    }
+    Ok(())
 }

@@ -11,8 +11,11 @@ use cop_core::{AgentEvent, Verdict};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+mod canary;
 mod guard;
 mod scripts;
+
+pub use canary::{canaries, run_canaries, Canary, CanaryResult};
 
 /// A single rule from the policy file
 #[derive(Debug, Clone, Serialize, Deserialize)]

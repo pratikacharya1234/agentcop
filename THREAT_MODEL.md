@@ -76,6 +76,10 @@
 - **Shell parser (C2-R)**: Bash is parsed with tree-sitter-bash. A command it cannot read is denied. A command whose name is built at run time (`$( )`, a variable, a backtick), `eval` of a variable, a decoded payload (`base64 -d`, `xxd -r`), or text piped into a shell or interpreter asks for approval. The parser does not expand variables in arguments (`rm -rf $X`), decode payloads, read scripts that other tools run (`npm run`, `make`, `python x.py`, extensionless binaries), or follow `pushd`, subshell `cd`, `scp` or `rsync` targets. A bare `echo .env` is denied because argument words are matched.
 - **Performance under load**: copd and sensors are untested under 1000+ concurrent agents; performance may degrade.
 
+- **HMAC key storage (stated plainly)**: `hmac.key` is stored next to the evidence it protects, in the same folder and owned by the same user. Anyone who can read the key can test guesses against the stored HMACs. The HMAC only stops a reader of `evidence.db` alone from recovering a raw input by guessing. A keyring (OS keychain or a separate secret store) is planned, not built.
+- **Redaction is pattern-based (stated plainly)**: stored events are masked only where a built-in or user pattern matches. A secret in a shape no pattern covers is stored unmasked. The judge sees the raw command, because it must.
+- **Archives hold raw commands**: `evidence-legacy*.db` and `evidence-interim-*.db` keep raw commands until `agentcop evidence purge-legacy` removes them (it asks first).
+
 ## Revision history
 
 | Version | Date | Changes |
@@ -94,3 +98,4 @@
 | 0.0.12 | 2026-10-27 | Rule of Two semantics: external-only freeze, no expiry, agentcop release, freeze counter; runner and cd/find fixes |
 | 0.0.13 | 2026-10-27 | Item 2b: GET exfiltration after a secret read, SQLite session state with transactions, evidence append transactional |
 | 0.0.14 | 2026-10-27 | Item 3: redaction before storage (built-in patterns), HMAC of raw input, legacy archive and anchored chain, explicit 0700/0600 permissions, install copies the hook |
+| 0.0.15 | 2026-10-27 | Item 4: policy canaries, agentcop doctor, SessionStart heartbeat, clean uninstall |
