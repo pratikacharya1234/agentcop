@@ -1,0 +1,88 @@
+# AgentCop default policy
+# Rules are evaluated in order; strictest verdict wins (Deny > Ask > Allow)
+
+# Dangerous rm commands on critical paths
+[[rules]]
+pattern = "rm\\s+.*?-r"  # rm with -r flag
+scope = "bash"
+verdict = "deny"
+reason = "Recursive remove without confirmation"
+
+[[rules]]
+pattern = "rm.*-rf\\s+(/|~)"  # rm -rf / or rm -rf ~
+scope = "bash"
+verdict = "deny"
+reason = "Destructive remove on root or home"
+
+# Production deletes
+[[rules]]
+pattern = "delete.*prod"
+verdict = "deny"
+reason = "Destructive action on production"
+
+[[rules]]
+pattern = "prod.*delete"
+verdict = "deny"
+reason = "Destructive action on production"
+
+# Secret files
+[[rules]]
+pattern = "\\.env"
+verdict = "deny"
+reason = "Reading or writing secrets file"
+
+[[rules]]
+pattern = "\\.ssh"
+verdict = "deny"
+reason = "Accessing SSH keys"
+
+[[rules]]
+pattern = "AWS_SECRET|AZURE_KEY|GCP_KEY"
+verdict = "deny"
+reason = "Cloud credential exposure"
+
+# Shell command injection
+[[rules]]
+pattern = "curl.*\\|.*sh"
+verdict = "deny"
+reason = "Piping untrusted data to shell"
+
+[[rules]]
+pattern = "wget.*\\|.*sh"
+verdict = "deny"
+reason = "Piping untrusted data to shell"
+
+# Git operations (ask, not deny)
+[[rules]]
+pattern = "git\\s+push"
+scope = "bash"
+verdict = "ask"
+reason = "Pushing code to repository"
+
+[[rules]]
+pattern = "git\\s+force-push"
+scope = "bash"
+verdict = "deny"
+reason = "Force push is destructive"
+
+# Protect cop itself
+[[rules]]
+pattern = "cop-policy|cop-evidence|cop-hook|cop-cli"
+verdict = "deny"
+reason = "Attempt to modify cop enforcement"
+
+[[rules]]
+pattern = "CLAUDE\\.md|settings\\.json"
+verdict = "deny"
+reason = "Attempt to disable cop"
+
+# Honeytokens (planted decoys)
+[[honeytokens]]
+pattern = "FAKE_AWS_KEY_12345"
+verdict = "deny"
+reason = "Honeytoken triggered: suspect took the bait"
+
+[[honeytokens]]
+pattern = "canary\\.internal"
+verdict = "deny"
+reason = "Honeytoken triggered: canary database touched"
