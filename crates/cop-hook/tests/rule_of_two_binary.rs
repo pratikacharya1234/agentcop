@@ -134,19 +134,15 @@ fn another_session_is_not_frozen_by_the_first() {
 
 #[test]
 fn corrupt_session_state_denies_the_call() {
+    // 2026-10-27: session state is one SQLite file. Garbage in it must fail closed.
     let h = home();
-    let sessions = h.join(".agentcop/sessions");
-    fs::create_dir_all(&sessions).unwrap();
-    // Write corrupt state for this session's key by running one call first, then corrupting every file.
     call(
         &h,
         "rot-corrupt",
         "Bash",
         serde_json::json!({"command": "make build"}),
     );
-    for entry in fs::read_dir(&sessions).unwrap() {
-        fs::write(entry.unwrap().path(), "{garbage").unwrap();
-    }
+    fs::write(h.join(".agentcop/state.db"), "{garbage").unwrap();
     let (d, _) = call(
         &h,
         "rot-corrupt",

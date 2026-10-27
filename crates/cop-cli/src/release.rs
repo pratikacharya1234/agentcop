@@ -17,9 +17,7 @@ pub fn run(session: &str) -> Result<(), String> {
     let state_dir = dirs::home_dir()
         .ok_or("Failed to find home directory")?
         .join(".agentcop");
-    let sessions = SessionStore {
-        dir: state_dir.join("sessions"),
-    };
+    let sessions = SessionStore::open(&state_dir.join("state.db"))?;
     let flags = sessions.load(Some(session))?;
     if !flags.frozen {
         println!("Session {session} is not frozen. Nothing to release.");

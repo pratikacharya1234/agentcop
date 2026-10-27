@@ -16,9 +16,7 @@ fn home(name: &str) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("release-{name}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join(".agentcop")).unwrap();
-    let store = SessionStore {
-        dir: dir.join(".agentcop/sessions"),
-    };
+    let store = SessionStore::open(&dir.join(".agentcop/state.db")).unwrap();
     let frozen = Flags {
         untrusted: true,
         sensitive: true,
@@ -70,9 +68,7 @@ fn yes_releases_the_session_and_logs_who_and_when() {
     let out = release(&h, "y\n");
     assert!(out.contains("CASE-abc123def456"), "{out}");
     assert!(out.contains("blocked"), "{out}");
-    let store = SessionStore {
-        dir: h.join(".agentcop/sessions"),
-    };
+    let store = SessionStore::open(&h.join(".agentcop/state.db")).unwrap();
     let after = store.load(Some("rel")).unwrap();
     assert!(!after.frozen && after.freeze.is_none());
     assert_eq!(evidence_rows(&h), 1, "one release row");
@@ -83,9 +79,7 @@ fn no_changes_nothing() {
     let h = home("no");
     let out = release(&h, "n\n");
     assert!(out.contains("not released"), "{out}");
-    let store = SessionStore {
-        dir: h.join(".agentcop/sessions"),
-    };
+    let store = SessionStore::open(&h.join(".agentcop/state.db")).unwrap();
     assert!(store.load(Some("rel")).unwrap().frozen);
     assert_eq!(evidence_rows(&h), 0);
 }

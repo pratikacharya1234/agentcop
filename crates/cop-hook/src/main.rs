@@ -175,15 +175,14 @@ fn run() -> Result<(), String> {
     }
     let hook_event_name = event.hook_event_name.clone();
 
-    // Rule of Two: per-session state. Load, step, save. Any error here is a deny (the ? returns Err to main).
+    // Rule of Two: per-session state. The whole decision runs in one transaction on the state file,
+    // so parallel hook processes see each other's freezes and counts. Any error here is a deny.
     let taint = load_taint_rules()?;
-    let sessions = SessionStore {
-        dir: evidence_dir.join("sessions"),
-    };
+    let sessions = SessionStore::open(&evidence_dir.join("state.db"))?;
     let session_id = event.session_id.clone();
     let session = session_id.as_deref();
-    let before = sessions.load(session)?;
-    let now = classify_with(&event, &taint, &before.foreign);
+    let (verdict_out, reason_with_case) = sessions.update(session, |before| {
+    let now = classify_with(&event, &taint, &before);
     let (mut after, trigger) = step(before.clone(), &event, &taint);
 
     // A frozen session blocks only external actions. Each block adds to the freeze's counter; it writes no row.
@@ -259,8 +258,9 @@ fn run() -> Result<(), String> {
             .map(|f| f.case.clone())
             .unwrap_or_default()
     };
-    sessions.save(session, after)?;
     let reason_with_case = format!("{} [{}]", reason_out, case_name);
+        Ok((after, (verdict_out, reason_with_case)))
+    })?;
 
     // Output verdict JSON (before playing sound, so it returns immediately)
     let verdict_str = verdict_word(verdict_out);

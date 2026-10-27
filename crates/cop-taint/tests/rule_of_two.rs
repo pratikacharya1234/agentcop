@@ -189,11 +189,13 @@ fn classification_matches_the_rules() {
 
 // ---- state on disk ----
 
+/// A fresh state file for one test. 2026-10-27: state is one SQLite file, not one JSON file per session.
 fn fresh_store(name: &str) -> SessionStore {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("taint-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
-    SessionStore { dir }
+    fs::create_dir_all(&dir).unwrap();
+    SessionStore::open(&dir.join("state.db")).unwrap()
 }
 
 #[test]
@@ -216,15 +218,15 @@ fn sessions_are_independent() {
 
 #[test]
 fn corrupt_state_file_is_an_error() {
-    let store = fresh_store("corrupt");
+    // 2026-10-27: a corrupt state file must fail closed (the hook denies when it cannot read state).
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+        .join(format!("taint-corrupt-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("state.db");
+    let store = SessionStore::open(&path).unwrap();
     store.save(Some("s"), Flags::default()).unwrap();
-    let file = fs::read_dir(&store.dir)
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    fs::write(file, "{not json").unwrap();
+    fs::write(&path, "this is not a database").unwrap();
     assert!(store.load(Some("s")).is_err());
 }
 
@@ -238,15 +240,18 @@ fn missing_session_id_uses_one_shared_key() {
 }
 
 #[test]
-fn a_session_id_cannot_escape_the_state_directory() {
+fn a_session_id_is_a_text_key_not_a_path() {
+    // 2026-10-27: sessions are rows in one database. A hostile id creates no file of its own.
     let store = fresh_store("escape");
     store.save(Some("../../evil"), Flags::default()).unwrap();
-    let entries: Vec<_> = fs::read_dir(&store.dir).unwrap().collect();
-    assert_eq!(
-        entries.len(),
-        1,
-        "exactly one state file inside the directory"
-    );
+    assert!(store.load(Some("../../evil")).is_ok());
+    let entries: Vec<_> = fs::read_dir(
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("taint-escape-{}", std::process::id())),
+    )
+    .unwrap()
+    .collect();
+    assert_eq!(entries.len(), 1, "only the state file exists");
 }
 
 #[test]

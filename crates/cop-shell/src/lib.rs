@@ -170,6 +170,7 @@ impl Walker<'_> {
             self.runner_target(&argv);
             self.find_delete_target(&argv);
             self.destructive_target(&argv);
+            self.network_target(&argv);
             self.track_cd(&argv);
             self.write_targets(&argv);
             self.wrapped_command(&argv);
@@ -247,6 +248,15 @@ impl Walker<'_> {
             }
             let resolved = self.normalize(&path);
             self.emit(format!("{kind} {resolved}"));
+        }
+    }
+
+    /// A network tool whose arguments (the URL, the host) are built at run time: the request can not be read, so ask.
+    fn network_target(&mut self, argv: &[String]) {
+        let name = base_name(&argv[0]);
+        let built = argv[1..].iter().any(|a| a.contains(['$', '`']));
+        if NETWORK_TOOLS.contains(&name.as_str()) && built {
+            self.uncertain("a network request is built at run time");
         }
     }
 
@@ -484,6 +494,12 @@ fn is_redirect(kind: &str) -> bool {
 fn is_skipped(kind: &str) -> bool {
     is_redirect(kind) || kind == "comment" || kind == "variable_assignment"
 }
+
+/// Tools that send or fetch over the network.
+const NETWORK_TOOLS: [&str; 13] = [
+    "curl", "wget", "nc", "ncat", "ssh", "scp", "sftp", "rsync", "ftp", "dig", "nslookup", "host",
+    "telnet",
+];
 
 /// Shells that run a script file when given one.
 const SHELLS: [&str; 5] = ["sh", "bash", "zsh", "dash", "ksh"];

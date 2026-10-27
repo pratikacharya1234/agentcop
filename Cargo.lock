@@ -489,6 +489,7 @@ dependencies = [
  "cop-core",
  "cop-shell",
  "regex",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",

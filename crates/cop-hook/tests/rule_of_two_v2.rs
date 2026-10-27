@@ -91,9 +91,7 @@ fn trigger_freeze(home: &Path, session: &str) -> (String, String) {
 }
 
 fn flags(home: &Path, session: &str) -> cop_taint::Flags {
-    let store = SessionStore {
-        dir: home.join(".agentcop/sessions"),
-    };
+    let store = SessionStore::open(&home.join(".agentcop/state.db")).unwrap();
     store.load(Some(session)).expect("session loads")
 }
 
@@ -184,9 +182,7 @@ fn fifty_frozen_calls_make_one_trigger_row_and_a_counter() {
 fn released_session_gets_ask_not_deny_on_the_next_push() {
     let home = scratch("release");
     trigger_freeze(&home, "t5");
-    let store = SessionStore {
-        dir: home.join(".agentcop/sessions"),
-    };
+    let store = SessionStore::open(&home.join(".agentcop/state.db")).unwrap();
     let released = cop_taint::release(&store, Some("t5"), "tester", "2026-10-27T12:00:00Z")
         .expect("release works")
         .expect("the session was frozen");

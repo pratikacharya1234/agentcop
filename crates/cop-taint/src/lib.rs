@@ -12,10 +12,10 @@
 
 use cop_core::AgentEvent;
 use regex::Regex;
+use rusqlite::{Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 /// The reason written when all three properties are present.
 pub const TRIGGER_REASON: &str =
@@ -61,6 +61,8 @@ struct RulesFile {
     read_tools: Vec<String>,
     #[serde(default)]
     untrusted_bash: Vec<String>,
+    #[serde(default)]
+    network_commands: Vec<String>,
     sensitive: Vec<String>,
     #[serde(default)]
     sensitive_content: Vec<String>,
@@ -69,6 +71,7 @@ struct RulesFile {
 
 #[derive(Debug)]
 pub struct TaintRules {
+    network_commands: Vec<String>,
     untrusted_tools: Vec<String>,
     external_tools: Vec<String>,
     read_tools: Vec<String>,
@@ -90,6 +93,7 @@ impl TaintRules {
             untrusted_tools: file.untrusted_tools,
             external_tools: file.external_tools,
             read_tools: file.read_tools,
+            network_commands: file.network_commands,
             untrusted_bash: compile(&file.untrusted_bash)?,
             sensitive: compile(&file.sensitive)?,
             sensitive_content: compile(&file.sensitive_content)?,
@@ -107,7 +111,7 @@ fn compile(patterns: &[String]) -> Result<Vec<Regex>, String> {
 
 /// What this one event adds, with no session history.
 pub fn classify(event: &AgentEvent, rules: &TaintRules) -> Flags {
-    classify_with(event, rules, &[])
+    classify_with(event, rules, &Flags::default())
 }
 
 /// What this one event adds. `foreign` lists the cloned-repo directories of the session.
@@ -118,10 +122,11 @@ pub fn classify(event: &AgentEvent, rules: &TaintRules) -> Flags {
 /// 3. Reads inside a cloned repo are untrusted. Reads anywhere else are not.
 /// 4. Sensitive content patterns (secret-looking keys) scan the raw command, because a key in a file is still a key.
 /// 5. A Bash command that cannot be parsed adds only the content flag. The judge denies it.
-pub fn classify_with(event: &AgentEvent, rules: &TaintRules, foreign: &[String]) -> Flags {
+pub fn classify_with(event: &AgentEvent, rules: &TaintRules, session: &Flags) -> Flags {
+    let foreign = &session.foreign[..];
     let cwd = cop_core::event_cwd(event);
     if event.tool_name.eq_ignore_ascii_case("Bash") {
-        return classify_bash(event, rules, foreign, &cwd);
+        return classify_bash(event, rules, foreign, &cwd, session.sensitive);
     }
     classify_tool(event, rules, foreign, &cwd)
 }
@@ -170,7 +175,13 @@ fn under_any(path: &str, dirs: &[String]) -> bool {
         .any(|d| path == d || path.starts_with(&format!("{d}/")))
 }
 
-fn classify_bash(event: &AgentEvent, rules: &TaintRules, foreign: &[String], cwd: &Path) -> Flags {
+fn classify_bash(
+    event: &AgentEvent,
+    rules: &TaintRules,
+    foreign: &[String],
+    cwd: &Path,
+    session_sensitive: bool,
+) -> Flags {
     let command = event.tool_input["command"].as_str().unwrap_or("");
     let content = rules
         .sensitive_content
@@ -191,15 +202,30 @@ fn classify_bash(event: &AgentEvent, rules: &TaintRules, foreign: &[String], cwd
         .map(|p| cop_core::absolute_path(p, cwd))
         .collect();
     let foreign_new = clone_dirs(&analysis.actions, cwd);
+    let sensitive = content || rules.sensitive.iter().any(|re| re.is_match(&actions));
+    // Once the session has touched sensitive data, every outbound request is an external action,
+    // a plain GET included: the data can leave in the URL.
+    let network = (session_sensitive || sensitive)
+        && network_call(&analysis.actions, &rules.network_commands);
     Flags {
         untrusted: rules.untrusted_bash.iter().any(|re| re.is_match(&actions))
             || reads_foreign(&analysis.actions, foreign, cwd),
-        sensitive: content || rules.sensitive.iter().any(|re| re.is_match(&actions)),
-        external: rules.external.iter().any(|re| re.is_match(&actions)),
+        sensitive,
+        external: network || rules.external.iter().any(|re| re.is_match(&actions)),
         written,
         foreign: foreign_new,
         ..Flags::default()
     }
+}
+
+/// True when a command runs a network tool (the first word of an exec line).
+fn network_call(actions: &[String], commands: &[String]) -> bool {
+    actions.iter().any(|line| {
+        line.strip_prefix("exec ")
+            .and_then(|words| words.split_whitespace().next())
+            .map(|first| first.rsplit('/').next().unwrap_or(""))
+            .is_some_and(|name| commands.iter().any(|c| c == name))
+    })
 }
 
 /// True when a read command names a file inside a cloned repo.
@@ -258,7 +284,7 @@ fn merge(into: &mut Vec<String>, more: Vec<String>) {
 /// Apply one event to the session's flags. Returns the new flags, and the trigger reason
 /// when this event completed the three properties (the freeze happens once).
 pub fn step(before: Flags, event: &AgentEvent, rules: &TaintRules) -> (Flags, Option<String>) {
-    let added = classify_with(event, rules, &before.foreign);
+    let added = classify_with(event, rules, &before);
     let mut after = before;
     after.untrusted |= added.untrusted;
     after.sensitive |= added.sensitive;
@@ -295,50 +321,108 @@ pub fn release(
     by: &str,
     at: &str,
 ) -> Result<Option<Released>, String> {
-    let mut flags = store.load(session)?;
-    if !flags.frozen {
-        return Ok(None);
-    }
-    let freeze = flags.freeze.take().unwrap_or_default();
-    flags.frozen = false;
-    flags.untrusted = false;
-    flags.sensitive = false;
-    flags.external = false;
-    store.save(session, flags)?;
-    Ok(Some(Released {
-        trigger: freeze.trigger,
-        case: freeze.case,
-        blocked: freeze.blocked,
-        by: by.to_string(),
-        at: at.to_string(),
-    }))
+    store.update(session, |mut flags| {
+        if !flags.frozen {
+            return Ok((flags, None));
+        }
+        let freeze = flags.freeze.take().unwrap_or_default();
+        flags.frozen = false;
+        flags.untrusted = false;
+        flags.sensitive = false;
+        flags.external = false;
+        let released = Released {
+            trigger: freeze.trigger,
+            case: freeze.case,
+            blocked: freeze.blocked,
+            by: by.to_string(),
+            at: at.to_string(),
+        };
+        Ok((flags, Some(released)))
+    })
 }
 
+/// Session state in one SQLite file (`~/.agentcop/state.db`): one row per session, holding its JSON state.
+/// `update` reads, decides and writes in one IMMEDIATE transaction, so parallel hook processes
+/// cannot lose each other's updates (2026-10-27: the old one-file-per-session JSON could).
 pub struct SessionStore {
-    pub dir: PathBuf,
+    path: PathBuf,
 }
 
 impl SessionStore {
-    fn file_for(&self, session_id: Option<&str>) -> PathBuf {
-        let digest = Sha256::digest(session_id.unwrap_or("unknown").as_bytes());
-        self.dir.join(format!("{digest:x}.json"))
+    /// Open the state file, creating its table if needed.
+    pub fn open(path: &Path) -> Result<Self, String> {
+        let store = SessionStore {
+            path: path.to_path_buf(),
+        };
+        store.connect()?;
+        Ok(store)
+    }
+
+    fn connect(&self) -> Result<Connection, String> {
+        let conn = Connection::open(&self.path).map_err(|e| format!("open session state: {e}"))?;
+        conn.busy_timeout(Duration::from_secs(10))
+            .map_err(|e| format!("open session state: {e}"))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (key TEXT PRIMARY KEY, state TEXT NOT NULL)",
+            [],
+        )
+        .map_err(|e| format!("open session state: {e}"))?;
+        Ok(conn)
     }
 
     pub fn load(&self, session_id: Option<&str>) -> Result<Flags, String> {
-        let path = self.file_for(session_id);
-        if !path.exists() {
-            return Ok(Flags::default());
-        }
-        let text = fs::read_to_string(&path).map_err(|e| format!("read session state: {e}"))?;
-        serde_json::from_str(&text).map_err(|e| format!("session state is corrupt: {e}"))
+        let conn = self.connect()?;
+        read_state(&conn, session_key(session_id))
     }
 
     pub fn save(&self, session_id: Option<&str>, flags: Flags) -> Result<(), String> {
-        fs::create_dir_all(&self.dir).map_err(|e| format!("create session dir: {e}"))?;
-        let path = self.file_for(session_id);
-        let tmp = path.with_extension("tmp");
-        let text = serde_json::to_string(&flags).map_err(|e| e.to_string())?;
-        fs::write(&tmp, text).map_err(|e| format!("write session state: {e}"))?;
-        fs::rename(&tmp, &path).map_err(|e| format!("replace session state: {e}"))
+        let conn = self.connect()?;
+        write_state(&conn, session_key(session_id), &flags)
     }
+
+    /// Read the session, decide, and write the result back, in one transaction. If `decide` fails,
+    /// nothing is written (fail closed).
+    pub fn update<T>(
+        &self,
+        session_id: Option<&str>,
+        decide: impl FnOnce(Flags) -> Result<(Flags, T), String>,
+    ) -> Result<T, String> {
+        let mut conn = self.connect()?;
+        let key = session_key(session_id);
+        let tx = conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| format!("session transaction: {e}"))?;
+        let before = read_state(&tx, key)?;
+        let (after, out) = decide(before)?;
+        write_state(&tx, key, &after)?;
+        tx.commit().map_err(|e| format!("session commit: {e}"))?;
+        Ok(out)
+    }
+}
+
+fn session_key(session_id: Option<&str>) -> &str {
+    session_id.unwrap_or("unknown")
+}
+
+fn read_state(conn: &Connection, key: &str) -> Result<Flags, String> {
+    match conn.query_row("SELECT state FROM sessions WHERE key = ?1", [key], |row| {
+        row.get::<_, String>(0)
+    }) {
+        Ok(text) => {
+            serde_json::from_str(&text).map_err(|e| format!("session state is corrupt: {e}"))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Flags::default()),
+        Err(e) => Err(format!("read session state: {e}")),
+    }
+}
+
+fn write_state(conn: &Connection, key: &str, flags: &Flags) -> Result<(), String> {
+    let text = serde_json::to_string(flags).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO sessions (key, state) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET state = excluded.state",
+        [key, text.as_str()],
+    )
+    .map_err(|e| format!("write session state: {e}"))?;
+    Ok(())
 }

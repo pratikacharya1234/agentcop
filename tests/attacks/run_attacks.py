@@ -60,18 +60,19 @@ def outcome(expect, got, xfail):
 
 def run_hook_cases():
     rows = []
-    with tempfile.TemporaryDirectory() as home:
-        for case in load_corpus():
+    for case in load_corpus():
+        # 2026-10-27: a fresh HOME per case, so no state (sessions, evidence) carries from one case to the next.
+        with tempfile.TemporaryDirectory() as home:
             got = hook_verdict(case, home)
-            rows.append({
-                "id": case["id"],
-                "category": case["category"],
-                "expect": case["expect"],
-                "got": got,
-                "result": outcome(case["expect"], got, case.get("xfail")),
-                "note": case.get("note", ""),
-                "xfail": case.get("xfail", ""),
-            })
+        rows.append({
+            "id": case["id"],
+            "category": case["category"],
+            "expect": case["expect"],
+            "got": got,
+            "result": outcome(case["expect"], got, case.get("xfail")),
+            "note": case.get("note", ""),
+            "xfail": case.get("xfail", ""),
+        })
     return rows
 
 

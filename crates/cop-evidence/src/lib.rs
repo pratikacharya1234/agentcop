@@ -11,6 +11,7 @@ use cop_core::{Case, Verdict};
 use rusqlite::{params, Connection, Result as SqliteResult};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+use std::time::Duration;
 
 /// A case stored in the evidence database
 #[derive(Debug, Clone)]
@@ -33,6 +34,8 @@ impl EvidenceStore {
     /// Create or open an evidence store at the given path
     pub fn new(path: &Path) -> SqliteResult<Self> {
         let conn = Connection::open(path)?;
+        // Parallel hook processes wait for each other's append instead of failing.
+        conn.busy_timeout(Duration::from_secs(10))?;
 
         // Create the cases table if it doesn't exist
         conn.execute(
@@ -52,7 +55,23 @@ impl EvidenceStore {
     }
 
     /// Append a case to the evidence store
+    /// Append a case. The read of the previous hash and the insert run in one IMMEDIATE transaction,
+    /// so parallel appends extend one chain instead of forking it.
     pub fn append(&self, case: &Case) -> SqliteResult<i64> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        match self.append_chained(case) {
+            Ok(id) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(id)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    fn append_chained(&self, case: &Case) -> SqliteResult<i64> {
         let event_json = serde_json::to_string(&case.event).expect("Failed to serialize event");
         let verdict_str = match case.verdict {
             Verdict::Allow => "allow",

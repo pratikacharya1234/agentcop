@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const INSTALLED_POLICY: &str = include_str!("../../../policy/default.toml");
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
+static SESSION: AtomicUsize = AtomicUsize::new(0);
 
 /// A throwaway HOME (with its own working directory) removed on drop.
 struct Sandbox {
@@ -97,9 +98,11 @@ fn run_hook(sandbox: &Sandbox, stdin_text: &str) -> HookRun {
 
 /// A real Claude Code PreToolUse event, as JSON text.
 fn event(tool_name: &str, tool_input: Value) -> String {
+    // 2026-10-27: every event gets its own session, so no case can freeze or count for another.
+    let n = SESSION.fetch_add(1, Ordering::SeqCst);
     json!({
         "hook_event_name": "PreToolUse",
-        "session_id": "real-binary-test",
+        "session_id": format!("real-binary-{n}"),
         "cwd": "/tmp",
         "tool_name": tool_name,
         "tool_input": tool_input
@@ -162,10 +165,13 @@ fn real_binary_verdicts_match_expected_for_each_case() {
         ),
     ];
 
-    let sandbox = Sandbox::new(Some(INSTALLED_POLICY));
+    // 2026-10-27: each case gets a fresh HOME (and so a fresh state file) as well as a fresh session.
     let mut failures = Vec::new();
+    let mut verdicts = Vec::new();
     for (label, stdin_text, expected) in cases {
+        let sandbox = Sandbox::new(Some(INSTALLED_POLICY));
         let run = run_hook(&sandbox, &stdin_text);
+        verdicts.push(format!("{label}: {:?}", run.decision));
         if run.exit_code != 0 || run.decision.as_deref() != Some(expected) {
             failures.push(format!(
                 "{label}: expected {expected} exit 0, got {:?} exit {}",
@@ -173,6 +179,7 @@ fn real_binary_verdicts_match_expected_for_each_case() {
             ));
         }
     }
+    eprintln!("verdicts under isolation:\n{}", verdicts.join("\n"));
     assert!(
         failures.is_empty(),
         "real binary verdict mismatches:\n{}",
