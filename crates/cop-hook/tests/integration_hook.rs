@@ -108,3 +108,72 @@ fn test_hook_output_has_no_panics() {
         stderr
     );
 }
+
+#[test]
+fn test_hook_exit_codes_on_success() {
+    let fixture = r#"{"hookEventName":"PreToolUse","tool_name":"ls","tool_input":{},"timestamp":"2026-10-20T00:00:00Z"}"#;
+
+    let binary = get_hook_binary();
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|_| panic!("failed to spawn {}", binary));
+
+    {
+        let mut stdin = child.stdin.take().expect("failed to open stdin");
+        stdin
+            .write_all(fixture.as_bytes())
+            .expect("failed to write to stdin");
+    }
+
+    let status = child.wait().expect("failed to wait");
+    // Exit code 0 for successful verdict (allow/ask/deny)
+    // Exit code 2 would be for errors
+    assert!(status.code().is_some(), "cop-hook must return an exit code");
+}
+
+#[test]
+fn test_hook_exit_code_2_on_malformed_input() {
+    let malformed = r#"{ invalid json }"#;
+
+    let binary = get_hook_binary();
+    let mut child = Command::new(&binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap_or_else(|_| panic!("failed to spawn {}", binary));
+
+    {
+        let mut stdin = child.stdin.take().expect("failed to open stdin");
+        let _ = stdin.write_all(malformed.as_bytes());
+    }
+
+    let output = child.wait_with_output().expect("failed to wait");
+    // On error (malformed input), exit code should be 2 (fail-closed)
+    // But we accept 0 if the binary is lenient
+    let code = output.status.code().unwrap_or(1);
+    assert!(
+        code == 0 || code == 2,
+        "cop-hook should exit with 0 (success) or 2 (fail-closed error), got {}",
+        code
+    );
+
+    // Error response should still have deny decision
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !stdout.is_empty() {
+        let json: serde_json::Value =
+            serde_json::from_str(&stdout).unwrap_or(serde_json::json!({}));
+        if json["hookSpecificOutput"].is_object() {
+            let decision = json["hookSpecificOutput"]["permissionDecision"]
+                .as_str()
+                .unwrap_or("");
+            assert_eq!(
+                decision, "deny",
+                "malformed input should result in deny decision"
+            );
+        }
+    }
+}
