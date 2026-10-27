@@ -14,6 +14,7 @@ members = [
   "crates/cop-ratelimit",
   "crates/cop-pipeline",
   "crates/cop-ebpf",
+  "crates/cop-family",
 ]
 
 [workspace.package]
