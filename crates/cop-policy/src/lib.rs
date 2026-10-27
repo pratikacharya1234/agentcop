@@ -68,6 +68,24 @@ pub struct Policy {
     /// Redaction: `[[redact]]` tables add patterns to the built-in list; `redact = "off"` removes them all.
     #[serde(default)]
     pub redact: RedactSetting,
+    /// Extra secret file names (ADR 26). An exact basename, or a glob with one `*` at the start or the end.
+    /// They add to the built-in names and never remove one.
+    #[serde(default)]
+    pub sensitive_files_extra: Vec<String>,
+}
+
+/// Check the extra secret names: each one is a basename pattern, not empty, not a bare `*`, and has no `/`.
+/// A bad name is an error, so the hook refuses to run with it (fail closed).
+pub fn check_extra_names(names: &[String]) -> Result<(), String> {
+    for name in names {
+        let core = name.replace('*', "");
+        if core.is_empty() || name.contains('/') || name.chars().any(char::is_whitespace) {
+            return Err(format!(
+                "sensitive_files_extra entry {name:?} is not a file name pattern (use a basename or a glob like *.secret)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What the policy says about redaction (2026-10-27): patterns are added to the built-in list, and only the
@@ -161,6 +179,8 @@ pub struct Judge {
     compiled_rules: Vec<CompiledRule>, // (pattern, verdict, scope, reason, requires_secret)
     honeytokens: Vec<(Regex, String, Option<String>)>, // (pattern, verdict, reason)
     hook_guard: HookGuard,
+    /// The policy's extra secret file names (ADR 26).
+    secret_names: Vec<String>,
 }
 
 impl Judge {
@@ -188,6 +208,7 @@ impl Judge {
             compiled_rules,
             honeytokens,
             hook_guard: policy.hook_guard,
+            secret_names: policy.sensitive_files_extra,
         })
     }
 
@@ -221,7 +242,7 @@ impl Judge {
             if let Some(reason) = guard::hook_entry_change(&self.hook_guard, event, &[]) {
                 return (Verdict::Deny, reason.to_string());
             }
-            if let Some(reason) = tool_secret_reason(event) {
+            if let Some(reason) = tool_secret_reason(event, &self.secret_names) {
                 return (Verdict::Deny, reason.to_string());
             }
             return self
@@ -271,7 +292,10 @@ impl Judge {
             .unwrap_or_else(no_rules);
         // A secret file operand or write target is denied by its name (FP-1), not by a regex over the text.
         let operands = cop_shell::file_operands(&analysis.actions);
-        if let Some(path) = operands.iter().find(|p| cop_shell::is_secret_path(p)) {
+        if let Some(path) = operands
+            .iter()
+            .find(|p| cop_shell::is_secret_with(p, &self.secret_names))
+        {
             result = keep_stricter(result, (Verdict::Deny, secret_reason(path).to_string()));
         }
         let cwd = cop_core::event_cwd(event);
@@ -363,11 +387,11 @@ fn secret_reason(path: &str) -> &'static str {
 
 /// A file tool (Read, Write, Edit, Grep...) that names a secret file in `file_path` or `path` (FP-1). The text of
 /// its content or pattern is not looked at.
-fn tool_secret_reason(event: &AgentEvent) -> Option<&'static str> {
+fn tool_secret_reason(event: &AgentEvent, extra: &[String]) -> Option<&'static str> {
     ["file_path", "path"]
         .iter()
         .filter_map(|key| event.tool_input[*key].as_str())
-        .find(|p| cop_shell::is_secret_path(p))
+        .find(|p| cop_shell::is_secret_with(p, extra))
         .map(secret_reason)
 }
 
@@ -413,6 +437,7 @@ mod tests {
         let policy = Policy {
             hook_guard: HookGuard::default(),
             redact: RedactSetting::default(),
+            sensitive_files_extra: Vec::new(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
@@ -569,6 +594,7 @@ mod tests {
         let policy = Policy {
             hook_guard: HookGuard::default(),
             redact: RedactSetting::default(),
+            sensitive_files_extra: Vec::new(),
             mode: Mode::Enforce,
             rules: vec![
                 Rule {
@@ -627,6 +653,7 @@ mod tests {
         let policy = Policy {
             hook_guard: HookGuard::default(),
             redact: RedactSetting::default(),
+            sensitive_files_extra: Vec::new(),
             mode: Mode::Enforce,
             rules: vec![Rule {
                 pattern: "git.*push".to_string(),

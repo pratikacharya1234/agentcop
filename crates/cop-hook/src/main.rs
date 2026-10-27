@@ -184,6 +184,9 @@ fn run() -> Result<(), String> {
     };
 
     // Create judge from policy
+    // ADR 26: the policy may add secret file names, never remove the built-in ones. A bad name stops the hook.
+    cop_policy::check_extra_names(&policy.sensitive_files_extra)?;
+    let extra_secret_names = policy.sensitive_files_extra.clone();
     let judge = Judge::new(policy).map_err(|e| format!("Failed to create judge: {}", e))?;
 
     // Create sound player (for background audio playback)
@@ -235,7 +238,7 @@ fn run() -> Result<(), String> {
 
     // Rule of Two: per-session state. The whole decision runs in one transaction on the state file,
     // so parallel hook processes see each other's freezes and counts. Any error here is a deny.
-    let taint = load_taint_rules()?;
+    let taint = load_taint_rules()?.with_extra_secret_names(extra_secret_names);
     let sessions = SessionStore::open(&evidence_dir.join("state.db"))?;
     let session_id = event.session_id.clone();
     let session = session_id.as_deref();

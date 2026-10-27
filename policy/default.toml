@@ -26,6 +26,8 @@ reason = "Destructive action on production"
 # Secret files are denied in code, by file name (cop-shell secret.rs, FP-1 2026-10-26), for Bash operands,
 # write targets and the file_path of file tools. The reason is "Reading or writing secrets file", or
 # "Accessing SSH keys" for a path under .ssh. Text inside a pattern, a heredoc or a quote never matches.
+# You can ADD secret file names with a top-level `sensitive_files_extra = ["*.secret", "vault.json"]` (exact
+# basenames or one-star globs). The built-in names always apply; extra names never remove them (ADR 26).
 
 [[rules]]
 pattern = "AWS_SECRET|AZURE_KEY|GCP_KEY"

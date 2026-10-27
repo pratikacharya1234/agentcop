@@ -37,6 +37,28 @@ pub fn is_secret_path(word: &str) -> bool {
     name == "hmac.key" && parts.contains(&".agentcop")
 }
 
+/// True when this path word is a secret file by a built-in name, or by one of the policy's extra names. Extra names
+/// only add: a built-in name always applies (ADR 26). An extra name is an exact basename or a glob with one `*` at
+/// the start or the end (`*.secret`, `prod-*`).
+pub fn is_secret_with(word: &str, extra: &[String]) -> bool {
+    if is_secret_path(word) {
+        return true;
+    }
+    let name = word.rsplit('/').next().unwrap_or(word);
+    extra.iter().any(|pattern| glob_matches(pattern, name))
+}
+
+/// Exact match, or one `*` at the start or the end. Any other pattern matches nothing.
+fn glob_matches(pattern: &str, name: &str) -> bool {
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return name.ends_with(suffix);
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return name.starts_with(prefix);
+    }
+    pattern == name
+}
+
 /// The file operands of a parsed command: one word per operand, from the `operand` action lines, plus the
 /// targets of writes.
 pub fn file_operands(actions: &[String]) -> Vec<String> {

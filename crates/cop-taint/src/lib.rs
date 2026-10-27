@@ -87,9 +87,17 @@ pub struct TaintRules {
     untrusted_bash: Vec<Regex>,
     sensitive_content: Vec<Regex>,
     external: Vec<Regex>,
+    /// The policy's extra secret file names (ADR 26). Set by the hook with `with_extra_secret_names`.
+    extra_secret_names: Vec<String>,
 }
 
 impl TaintRules {
+    /// Add the policy's extra secret file names. They only add to the built-in names.
+    pub fn with_extra_secret_names(mut self, names: Vec<String>) -> Self {
+        self.extra_secret_names = names;
+        self
+    }
+
     pub fn from_toml(text: &str) -> Result<Self, String> {
         let file: RulesFile = toml::from_str(text).map_err(|e| format!("bad taint rules: {e}"))?;
         if file.external.is_empty() {
@@ -105,8 +113,17 @@ impl TaintRules {
             untrusted_bash: compile(&file.untrusted_bash)?,
             sensitive_content: compile(&file.sensitive_content)?,
             external: compile(&file.external)?,
+            extra_secret_names: Vec::new(),
         })
     }
+}
+
+/// True when a key-shaped pattern matches `text`, except a documented example key (FP-1 follow-up, ADR 27): the
+/// AWS documentation key and any key whose match ends in `EXAMPLE`. A real-looking key still matches.
+fn key_in_text(patterns: &[Regex], text: &str) -> bool {
+    patterns
+        .iter()
+        .any(|re| re.find_iter(text).any(|m| !m.as_str().ends_with("EXAMPLE")))
 }
 
 fn compile(patterns: &[String]) -> Result<Vec<Regex>, String> {
@@ -148,8 +165,9 @@ fn classify_tool(event: &AgentEvent, rules: &TaintRules, session: &Flags, cwd: &
         && path_field(event).is_some_and(|p| under_any(&cop_core::absolute_path(p, cwd), foreign));
     let untrusted = is_mcp || in_list(&rules.untrusted_tools) || reads_foreign;
     // A secret is a file by name (FP-1). Text in a tool's content or search pattern is not a file.
-    let sensitive = path_field(event).is_some_and(cop_shell::is_secret_path)
-        || rules.sensitive_content.iter().any(|re| re.is_match(&text));
+    let sensitive = path_field(event)
+        .is_some_and(|p| cop_shell::is_secret_with(p, &rules.extra_secret_names))
+        || key_in_text(&rules.sensitive_content, &text);
     // A secret in the session, or in this call, makes any way of sending it out an external action:
     // web requests (the URL carries the data) and MCP tools that send, post or write.
     let holds_secret = session.sensitive || sensitive;
@@ -202,10 +220,7 @@ fn classify_bash(
     session_sensitive: bool,
 ) -> Flags {
     let command = event.tool_input["command"].as_str().unwrap_or("");
-    let content = rules
-        .sensitive_content
-        .iter()
-        .any(|re| re.is_match(command));
+    let content = key_in_text(&rules.sensitive_content, command);
     let analysis = cop_shell::analyze(command);
     if analysis.unparsed {
         return Flags {
@@ -224,7 +239,7 @@ fn classify_bash(
     let sensitive = content
         || cop_shell::file_operands(&analysis.actions)
             .iter()
-            .any(|f| cop_shell::is_secret_path(f));
+            .any(|f| cop_shell::is_secret_with(f, &rules.extra_secret_names));
     // Once the session has touched sensitive data, every outbound request is an external action,
     // a plain GET included: the data can leave in the URL.
     let network = (session_sensitive || sensitive)

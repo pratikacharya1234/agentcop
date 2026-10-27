@@ -151,6 +151,7 @@ mod tests {
         let policy = cop_policy::Policy {
             hook_guard: Default::default(),
             redact: Default::default(),
+            sensitive_files_extra: Vec::new(),
             mode: cop_policy::Mode::Enforce,
             rules: vec![
                 cop_policy::Rule {

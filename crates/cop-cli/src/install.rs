@@ -378,6 +378,10 @@ fn merged_policy(old: &str) -> Result<String, String> {
     if let Some(off) = user.get("redact").and_then(|v| v.as_str()) {
         extras.insert("redact".to_string(), toml::Value::String(off.to_string()));
     }
+    // Extra secret file names (ADR 26) are the user's own; the built-in names are in code, not here.
+    if let Some(names) = user.get("sensitive_files_extra") {
+        extras.insert("sensitive_files_extra".to_string(), names.clone());
+    }
     if let Some(guard) = user.get("hook_guard") {
         extras.insert("hook_guard".to_string(), guard.clone());
     }

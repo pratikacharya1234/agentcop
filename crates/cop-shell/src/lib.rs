@@ -12,7 +12,7 @@
 
 mod secret;
 
-pub use secret::{file_operands, is_secret_path};
+pub use secret::{file_operands, is_secret_path, is_secret_with};
 
 use tree_sitter::{Node, Parser};
 
