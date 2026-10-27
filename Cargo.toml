@@ -27,6 +27,7 @@ members = [
   "crates/cop-rules",
   "crates/cop-gate-a",
   "crates/cop-gate-b",
+  "crates/cop-final",
 ]
 
 [workspace.package]
