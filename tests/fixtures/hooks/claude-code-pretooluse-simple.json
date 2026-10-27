@@ -1,0 +1,14 @@
+{
+  "hook_type": "PreToolUse",
+  "timestamp": "2026-10-20T14:30:00Z",
+  "session_id": "sess_abc123",
+  "user_id": "user_xyz",
+  "tool_name": "bash",
+  "tool_input": {
+    "command": "echo hello"
+  },
+  "context": {
+    "current_directory": "/home/user/project",
+    "environment": {}
+  }
+}
