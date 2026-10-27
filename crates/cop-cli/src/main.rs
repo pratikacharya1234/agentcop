@@ -57,14 +57,23 @@ fn run(cli: Cli) -> Result<(), String> {
 }
 
 fn install(dry_run: bool) -> Result<(), String> {
-    // Find settings.json (Linux path for now)
-    let settings_path = dirs::home_dir()
-        .ok_or("Failed to find home directory")?
-        .join(".config/Claude/claude-code/settings.json");
+    // Find settings.json at ~/.claude/settings.json (per Claude Code docs)
+    // Try project-local .claude/settings.json first, then ~/.claude/settings.json
+    let home_dir = dirs::home_dir().ok_or("Failed to find home directory")?;
+    let settings_path = if let Ok(cwd) = std::env::current_dir() {
+        let project_settings = cwd.join(".claude/settings.json");
+        if project_settings.exists() {
+            project_settings
+        } else {
+            home_dir.join(".claude/settings.json")
+        }
+    } else {
+        home_dir.join(".claude/settings.json")
+    };
 
     if !settings_path.exists() {
         return Err(format!(
-            "Claude Code settings not found at {}",
+            "Claude Code settings not found at {}. Expected ~/.claude/settings.json",
             settings_path.display()
         ));
     }
@@ -89,9 +98,34 @@ fn install(dry_run: bool) -> Result<(), String> {
         }
     }
 
-    // Add the hook
+    // Find cop-hook binary path
+    // First try: same directory as agentcop binary
+    // Then try: common installation paths
+    // Then try: from AGENTCOP_HOOK env var
+    let hook_path = std::env::var("AGENTCOP_HOOK")
+        .ok()
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|parent| parent.join("cop-hook")))
+                .and_then(|p| if p.exists() { Some(p.to_string_lossy().into_owned()) } else { None })
+        })
+        .or_else(|| {
+            let home = dirs::home_dir()?;
+            let agentcop_path = home.join(".agentcop/cop-hook");
+            if agentcop_path.exists() {
+                Some(agentcop_path.to_string_lossy().into_owned())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            "Could not find cop-hook binary. Set AGENTCOP_HOOK env var or ensure cop-hook is in same directory as agentcop".to_string()
+        })?;
+
+    // Add the hook with absolute path
     let hook = json!({
-        "hookPath": "cop-hook",
+        "hookPath": hook_path,
         "onFailure": "block"
     });
 
@@ -123,9 +157,17 @@ fn install(dry_run: bool) -> Result<(), String> {
 }
 
 fn uninstall() -> Result<(), String> {
-    let settings_path = dirs::home_dir()
-        .ok_or("Failed to find home directory")?
-        .join(".config/Claude/claude-code/settings.json");
+    let home_dir = dirs::home_dir().ok_or("Failed to find home directory")?;
+    let settings_path = if let Ok(cwd) = std::env::current_dir() {
+        let project_settings = cwd.join(".claude/settings.json");
+        if project_settings.exists() {
+            project_settings
+        } else {
+            home_dir.join(".claude/settings.json")
+        }
+    } else {
+        home_dir.join(".claude/settings.json")
+    };
     let backup_path = format!("{}.bak", settings_path.display());
 
     if !PathBuf::from(&backup_path).exists() {
