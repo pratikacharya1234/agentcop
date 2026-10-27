@@ -7,6 +7,10 @@
 //! 4. Auto-silent in CI, SSH, no audio device
 //! 5. Async playback via std::thread
 
+mod assets;
+
+pub use assets::SoundAssets;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;

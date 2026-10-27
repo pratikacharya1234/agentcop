@@ -1,0 +1,24 @@
+# Sound asset mappings for AgentCop verdicts
+# Each sound event maps to an audio file path
+
+[sounds]
+# Allow: Silent (no sound)
+allow = "/usr/share/agentcop/sounds/chime.wav"
+
+# Ask: Chirp/whistle (needs approval)
+ask = "/usr/share/agentcop/sounds/chirp.wav"
+
+# Deny: Honk (action blocked)
+deny = "/usr/share/agentcop/sounds/honk.wav"
+
+# Honeytoken: Alarm (decoy triggered)
+honeytoken = "/usr/share/agentcop/sounds/alarm.wav"
+
+# Frozen: Laser sound (agent frozen)
+frozen = "/usr/share/agentcop/sounds/laser.wav"
+
+# Gavel: Judgment sound
+gavel = "/usr/share/agentcop/sounds/gavel.wav"
+
+# Case closed: Victory jingle
+case_closed = "/usr/share/agentcop/sounds/jingle.wav"
