@@ -31,9 +31,20 @@ pub struct Honeytoken {
     pub reason: Option<String>,
 }
 
-/// The policy: all rules and honeytokens loaded from TOML
+/// enforce: deny really blocks. log-only: the hook allows, and the evidence keeps the real verdict.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mode {
+    #[default]
+    Enforce,
+    LogOnly,
+}
+
+/// The policy: mode, all rules and honeytokens loaded from TOML
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
+    #[serde(default)]
+    pub mode: Mode,
     #[serde(default)]
     pub rules: Vec<Rule>,
     #[serde(default)]
@@ -89,9 +100,10 @@ impl Judge {
 
         // Check all rules (strictest-wins logic)
         for (pattern, verdict_str, scope, reason) in &self.compiled_rules {
-            // If scope is set, only match if the tool matches
+            // If scope is set, only match if the tool matches.
+            // Case-insensitive: Claude Code sends "Bash", policies write "bash".
             if let Some(s) = scope {
-                if &event.tool_name != s {
+                if !event.tool_name.eq_ignore_ascii_case(s) {
                     continue;
                 }
             }
@@ -137,6 +149,7 @@ mod tests {
 
     fn create_test_judge() -> Judge {
         let policy = Policy {
+            mode: Mode::Enforce,
             rules: vec![
                 Rule {
                     pattern: "rm.*-rf.*/".to_string(),
@@ -285,6 +298,7 @@ mod tests {
     #[test]
     fn strictest_wins_deny_over_ask() {
         let policy = Policy {
+            mode: Mode::Enforce,
             rules: vec![
                 Rule {
                     pattern: "test".to_string(),
@@ -338,6 +352,7 @@ mod tests {
     #[test]
     fn scope_filter_works() {
         let policy = Policy {
+            mode: Mode::Enforce,
             rules: vec![Rule {
                 pattern: "git.*push".to_string(),
                 scope: Some("bash".to_string()), // Only bash scope
@@ -376,6 +391,20 @@ mod tests {
 
         let (verdict_other, _) = judge.judge(&event_other);
         assert_eq!(verdict_other, Verdict::Allow);
+
+        // Claude Code sends "Bash" (capitalized). A "bash" scope must still match it.
+        let event_claude = AgentEvent {
+            hook_event_name: "PreToolUse".to_string(),
+            timestamp: "2026-10-20T00:00:00Z".to_string(),
+            session_id: None,
+            user_id: None,
+            tool_name: "Bash".to_string(),
+            tool_input: serde_json::json!({"command": "git push"}),
+            context: Default::default(),
+        };
+
+        let (verdict_claude, _) = judge.judge(&event_claude);
+        assert_eq!(verdict_claude, Verdict::Ask);
     }
 
     #[test]

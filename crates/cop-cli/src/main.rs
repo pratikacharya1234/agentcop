@@ -8,6 +8,8 @@
 //! 5. Implement cases: list evidence (stub for A6)
 //! 6. Support --dry-run, idempotent operations
 
+mod fix;
+
 use clap::{Parser, Subcommand};
 use cop_evidence::EvidenceStore;
 use serde_json::{json, Value};
@@ -36,6 +38,11 @@ enum Commands {
     Verify,
     /// List recent cases
     Cases,
+    /// Suggest a deny rule for a case, show the diff, and ask before applying
+    Fix {
+        /// Case ID, e.g. CASE-0123456789ab
+        case_id: String,
+    },
 }
 
 fn main() {
@@ -53,6 +60,7 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Uninstall => uninstall(),
         Commands::Verify => verify(),
         Commands::Cases => cases(),
+        Commands::Fix { case_id } => fix::run(&case_id),
     }
 }
 
@@ -85,17 +93,12 @@ fn install(dry_run: bool) -> Result<(), String> {
         .map_err(|e| format!("Failed to parse settings.json: {}", e))?;
 
     // Check if already installed
-    if let Some(hooks) = settings.get("PreToolUse") {
-        if hooks.as_array().is_some_and(|arr| {
-            arr.iter().any(|h| {
-                h.get("hookPath")
-                    .and_then(|v| v.as_str())
-                    .is_some_and(|p| p.contains("cop-hook"))
-            })
-        }) {
-            println!("cop-hook already installed");
-            return Ok(());
+    if has_cop_hook(&settings) {
+        if !dry_run {
+            ensure_policy(&home_dir)?;
         }
+        println!("cop-hook already installed");
+        return Ok(());
     }
 
     // Find cop-hook binary path
@@ -122,17 +125,14 @@ fn install(dry_run: bool) -> Result<(), String> {
         .ok_or_else(|| {
             "Could not find cop-hook binary. Set AGENTCOP_HOOK env var or ensure cop-hook is in same directory as agentcop".to_string()
         })?;
+    // Claude Code needs an absolute path to a real file; refuse to install a dangling hook
+    let hook_path = fs::canonicalize(&hook_path)
+        .map_err(|e| format!("cop-hook not found at {}: {}", hook_path, e))?
+        .to_string_lossy()
+        .into_owned();
 
-    // Add the hook with absolute path
-    let hook = json!({
-        "hookPath": hook_path,
-        "onFailure": "block"
-    });
-
-    settings["PreToolUse"] = settings.get("PreToolUse").cloned().unwrap_or(json!([]));
-    if let Some(arr) = settings["PreToolUse"].as_array_mut() {
-        arr.push(hook);
-    }
+    // Append one matcher group under hooks.PreToolUse (other keys and groups are kept)
+    add_cop_hook(&mut settings, &hook_path)?;
 
     if dry_run {
         println!("Would write to: {}", settings_path.display());
@@ -141,6 +141,8 @@ fn install(dry_run: bool) -> Result<(), String> {
         println!("Settings: {}", pretty);
         return Ok(());
     }
+
+    ensure_policy(&home_dir)?;
 
     // Backup
     let backup_path = format!("{}.bak", settings_path.display());
@@ -153,6 +155,67 @@ fn install(dry_run: bool) -> Result<(), String> {
 
     println!("Installed cop-hook to Claude Code");
     println!("Backup saved to: {}", backup_path);
+    Ok(())
+}
+
+/// The default policy, compiled in, so `install` works from any directory.
+const DEFAULT_POLICY: &str = include_str!("../../../policy/default.toml");
+
+/// Copy the default policy to ~/.agentcop/policy.toml if missing. Never overwrites.
+fn ensure_policy(home_dir: &std::path::Path) -> Result<(), String> {
+    let policy_path = home_dir.join(".agentcop/policy.toml");
+    if policy_path.exists() {
+        return Ok(());
+    }
+    if let Some(dir) = policy_path.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create ~/.agentcop: {}", e))?;
+    }
+    fs::write(&policy_path, DEFAULT_POLICY)
+        .map_err(|e| format!("Failed to write policy: {}", e))?;
+    println!("Installed default policy to: {}", policy_path.display());
+    Ok(())
+}
+
+/// True if any hooks.PreToolUse matcher group already runs cop-hook.
+fn has_cop_hook(settings: &Value) -> bool {
+    settings["hooks"]["PreToolUse"]
+        .as_array()
+        .is_some_and(|groups| {
+            groups.iter().any(|group| {
+                group["hooks"].as_array().is_some_and(|hooks| {
+                    hooks.iter().any(|h| {
+                        h["command"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("cop-hook"))
+                    })
+                })
+            })
+        })
+}
+
+/// Append our matcher group to hooks.PreToolUse, creating the keys if needed.
+fn add_cop_hook(settings: &mut Value, hook_path: &str) -> Result<(), String> {
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings.json must contain a JSON object")?;
+    let hooks = root
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("settings.json \"hooks\" must be an object")?;
+    let pre_tool_use = hooks
+        .entry("PreToolUse")
+        .or_insert_with(|| json!([]))
+        .as_array_mut()
+        .ok_or("settings.json \"hooks.PreToolUse\" must be an array")?;
+    pre_tool_use.push(json!({
+        "matcher": "*",
+        "hooks": [{
+            "type": "command",
+            "command": hook_path,
+            "onFailure": "block"
+        }]
+    }));
     Ok(())
 }
 
@@ -215,11 +278,19 @@ fn cases() -> Result<(), String> {
     let store = EvidenceStore::new(&evidence_path)
         .map_err(|e| format!("Failed to open evidence store: {}", e))?;
 
-    let count = store
-        .count()
-        .map_err(|e| format!("Failed to count cases: {}", e))?;
+    let rows = store
+        .find_by_hash_prefix("")
+        .map_err(|e| format!("Failed to list cases: {}", e))?;
 
-    println!("Total cases: {}", count);
+    println!("Total cases: {}", rows.len());
+    for row in rows {
+        // Same ID that `agentcop fix` accepts: CASE- plus the first 12 hex characters of the hash.
+        let id: String = row.hash.chars().take(12).collect();
+        println!(
+            "CASE-{id}  {:<5}  {}  {}",
+            row.verdict, row.timestamp, row.reason
+        );
+    }
     Ok(())
 }
 

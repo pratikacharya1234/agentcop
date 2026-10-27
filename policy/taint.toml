@@ -1,0 +1,21 @@
+# Rule of Two rules. A session that reads untrusted input, touches sensitive data,
+# and takes an external action is frozen. Empty sensitive or external lists are refused.
+untrusted_tools = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
+untrusted_bash = ['\b(cat|head|tail|less|more|grep|rg|jq)\b']
+sensitive = [
+  '\.env\b',
+  '\.ssh\b',
+  'id_rsa|id_ed25519',
+  '\.aws\b',
+  'credentials',
+  '/etc/shadow',
+  '\.netrc',
+  'AKIA[0-9A-Z]{16}',
+]
+external = [
+  '(?:^|[\s;&|(\x22])(curl|wget|scp|sftp|rsync|nc|ncat|ssh|ftp)\b',
+  'git\s+push',
+  '\bgh\s+(pr|issue|gist|release)\b',
+  '\b(npm|cargo)\s+publish\b',
+]
+# MCP tools (names starting mcp__) always count as external.

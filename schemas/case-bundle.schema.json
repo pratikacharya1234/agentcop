@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentcop.local/schemas/case-bundle.v1.json",
+  "title": "AgentCop case bundle v1",
+  "description": "Evidence package for the detective. Every text field marked untrusted is data written by the agent or the sensors.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "case_id", "verdict", "evidence_hash", "chain_verified", "untrusted_notice", "untrusted", "recent"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "case_id": { "type": "string", "pattern": "^(CASE-[0-9a-f]{1,12}|CASE-UNSAVED)$" },
+    "verdict": { "enum": ["allow", "ask", "deny"] },
+    "evidence_hash": { "type": ["string", "null"], "maxLength": 128 },
+    "chain_verified": { "type": "boolean" },
+    "untrusted_notice": { "type": "string", "maxLength": 512 },
+    "untrusted": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/quoted" } },
+    "recent": { "type": "array", "maxItems": 20, "items": { "$ref": "#/$defs/recent" } }
+  },
+  "$defs": {
+    "quoted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["field", "truncated", "text"],
+      "properties": {
+        "field": { "type": "string", "maxLength": 64 },
+        "truncated": { "type": "boolean" },
+        "text": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "recent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "verdict", "timestamp", "hash", "detail"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 1 },
+        "verdict": { "enum": ["allow", "ask", "deny"] },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "hash": { "type": "string", "maxLength": 128 },
+        "detail": { "$ref": "#/$defs/quoted" }
+      }
+    }
+  }
+}

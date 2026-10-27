@@ -1,0 +1,24 @@
+# Egress policy for cop-proxy. A host not listed here cannot be reached through the proxy.
+# A host matches an entry when it is equal to the entry or a subdomain of it.
+allow_domains = [
+  "api.anthropic.com",
+  "github.com",
+  "pypi.org",
+  "files.pythonhosted.org",
+  "crates.io",
+  "static.crates.io",
+  "registry.npmjs.org",
+]
+
+# A match in a plaintext URL or request body blocks the request.
+[[secret_patterns]]
+name = "aws-access-key"
+regex = 'AKIA[0-9A-Z]{16}'
+
+[[secret_patterns]]
+name = "private-key-block"
+regex = '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+
+[[secret_patterns]]
+name = "github-token"
+regex = 'gh[pousr]_[A-Za-z0-9]{36}'

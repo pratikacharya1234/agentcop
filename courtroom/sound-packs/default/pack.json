@@ -1,0 +1,7 @@
+{
+  "name": "default",
+  "version": 1,
+  "clips": {
+    "gavel": { "file": "gavel.wav" }
+  }
+}

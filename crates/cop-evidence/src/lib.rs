@@ -138,6 +138,37 @@ impl EvidenceStore {
     }
 
     /// Get the number of cases in the store
+    /// The hash of the row with this id. Used to name the case that was just appended.
+    pub fn hash_for(&self, id: i64) -> SqliteResult<String> {
+        self.conn
+            .query_row("SELECT hash FROM cases WHERE id = ?1", params![id], |row| {
+                row.get(0)
+            })
+    }
+
+    /// Read-only lookup: rows whose hash starts with `prefix` (hex only), oldest first.
+    pub fn find_by_hash_prefix(&self, prefix: &str) -> SqliteResult<Vec<EvidenceRecord>> {
+        if !prefix.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Ok(Vec::new());
+        }
+        let mut stmt = self.conn.prepare(
+            "SELECT id, timestamp, event_json, verdict, reason, hash, prev_hash
+             FROM cases WHERE hash LIKE ?1 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![format!("{prefix}%")], |row| {
+            Ok(EvidenceRecord {
+                id: row.get(0)?,
+                timestamp: row.get(1)?,
+                event_json: row.get(2)?,
+                verdict: row.get(3)?,
+                reason: row.get(4)?,
+                hash: row.get(5)?,
+                prev_hash: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn count(&self) -> SqliteResult<u64> {
         self.conn
             .query_row("SELECT COUNT(*) FROM cases", [], |row| row.get(0))

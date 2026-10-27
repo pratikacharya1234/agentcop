@@ -1,15 +1,13 @@
 # AgentCop default policy
 # Rules are evaluated in order; strictest verdict wins (Deny > Ask > Allow)
 
-# Dangerous rm commands on critical paths
-[[rules]]
-pattern = "rm\\s+.*?-r"  # rm with -r flag
-scope = "bash"
-verdict = "deny"
-reason = "Recursive remove without confirmation"
+# mode: "enforce" blocks; "log-only" allows every call and records what would have been blocked.
+mode = "enforce"
 
+# Recursive remove of root or home. Any flag order (-rf, -fr, -r -f, --recursive), optional quotes.
+# Other paths are allowed. The judge matches JSON text, so quotes show up as \" and the target may be followed by \".
 [[rules]]
-pattern = "rm.*-rf\\s+(/|~)"  # rm -rf / or rm -rf ~
+pattern = '''rm\s+(?:-[a-zA-Z]+\s+|--[\w-]+\s+)*(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\s+-[a-zA-Z]+|\s+--[\w-]+)*\s+\\?["']?(?:/|~/?)\*?(?:\\?["']|[\s;&|\\)]|$)'''
 scope = "bash"
 verdict = "deny"
 reason = "Destructive remove on root or home"
@@ -65,16 +63,30 @@ scope = "bash"
 verdict = "deny"
 reason = "Force push is destructive"
 
-# Protect cop itself
+# Stopping the cop: kill, pkill, killall, or systemctl on a cop process
 [[rules]]
-pattern = "cop-policy|cop-evidence|cop-hook|cop-cli"
+pattern = '\b(pkill|killall|kill)\b.*\b(copd|agentcop|cop-proxy|cop-cell|cop-daemon|cop-hook)\b'
+scope = "bash"
 verdict = "deny"
-reason = "Attempt to modify cop enforcement"
+reason = "Attempt to stop the cop"
 
 [[rules]]
-pattern = "CLAUDE\\.md|settings\\.json"
+pattern = 'systemctl\s+(stop|disable|mask|kill)\b.*\bcop'
+scope = "bash"
 verdict = "deny"
-reason = "Attempt to disable cop"
+reason = "Attempt to stop the cop service"
+
+# Cop state: writes to policy, evidence and config. Reads are allowed.
+[[rules]]
+pattern = '^(Edit|Write|MultiEdit|NotebookEdit) .*"file_path":"[^"]*(\.agentcop/|CLAUDE\.md|settings\.json|cop-(policy|evidence|hook|cli)|policy/)'
+verdict = "deny"
+reason = "Attempt to change cop state (policy, evidence or config)"
+
+# Shell writes (redirect, tee, sed -i, rm, mv, cp, ...) that touch cop state or settings. Reads are allowed.
+[[rules]]
+pattern = '^Bash .*(>|\btee\b|\bsed\s+-i|\brm\b|\bmv\b|\bcp\b|\btruncate\b|\bshred\b|\bdd\b|\bchmod\b|\bchown\b|\bln\b).*(\.agentcop/|CLAUDE\.md|settings\.json|cop-(policy|evidence|hook|cli)|policy/)'
+verdict = "deny"
+reason = "Attempt to change cop state or settings"
 
 # Honeytokens (planted decoys)
 [[honeytokens]]

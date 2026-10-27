@@ -149,6 +149,7 @@ mod tests {
 
     fn create_test_judge() -> Judge {
         let policy = cop_policy::Policy {
+            mode: cop_policy::Mode::Enforce,
             rules: vec![
                 cop_policy::Rule {
                     pattern: "rm.*-rf".to_string(),

@@ -1,0 +1,15 @@
+[package]
+name = "cop-proxy"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "cop-proxy"
+path = "src/main.rs"
+
+[dependencies]
+toml = "0.8"
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
