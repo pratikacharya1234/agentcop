@@ -1,123 +1,195 @@
-# AgentCop
+<p align="center">
+  <img src="docs/assets/agentcop-logo.png" alt="AgentCop mascot: a blue cop robot in handcuffs with a terminal prompt on its face" width="200">
+</p>
+
+<h1 align="center">AgentCop</h1>
 
 <p align="center">
-  <img src="docs/assets/agentcop-logo.png" alt="AgentCop mascot: a blue cop robot in handcuffs with a terminal prompt on its face" width="220">
+  <b>A cartoon cop for your AI coding agent: it stops dangerous actions before they run, and keeps tamper-evident evidence of everything.</b>
 </p>
 
 <p align="center">
-  <img src="docs/assets/mugshot-example.png" alt="A cartoon mugshot card for a blocked command" width="320">
+  <a href="LICENSE-MIT"><img alt="License: MIT or Apache-2.0" src="https://img.shields.io/badge/license-MIT%20or%20Apache--2.0-blue"></a>
+  <img alt="Linux" src="https://img.shields.io/badge/platform-Linux-lightgrey">
+  <img alt="Works with Claude Code" src="https://img.shields.io/badge/works%20with-Claude%20Code-orange">
 </p>
 
-**AgentCop is a cartoon police officer for AI coding agents.** It stands between the agent and your computer. When the agent tries something dangerous, AgentCop stops it, writes it down, and gives the case a number.
+<!-- TODO: record docs/assets/arrest.gif with VHS (docs/assets/tapes/arrest.tape). Not recorded yet. -->
+> **GIF coming:** the arrest moment (`docs/assets/arrest.gif`) is not recorded yet. It will be a hook replay, not a live Claude Code session.
 
-> **Status: pre-release (v0.1 candidate).** Claude Code only, Linux first. It is a seatbelt, not a force field. The rules are only as good as their patterns, and some things get past them. Read [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md) before you rely on it.
->
-> AgentCop is an unofficial hobby project. It has no connection to any police force, and it does not impersonate one. The sirens are optional, and there is a mute button.
+> **Status: pre-release (v0.1 candidate).** Claude Code only, Linux only, command-line hook. It is a seatbelt, not a force field. Read [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md) before you rely on it. AgentCop is an unofficial hobby project with no connection to any police force.
 
-## See it work
+## Why
 
-![Gate A replay: the hook blocks a production volume delete and names the case](docs/assets/gate-a-replay.gif)
+In April 2026, a Cursor AI agent working on PocketOS, a car rental software company, deleted the production database and its volume-level backups in a single API call that took nine seconds. The newest off-site backup was about three months old ([Giskard write-up](https://www.giskard.ai/knowledge/a-cursor-ai-agent-wiped-a-production-database-in-9-seconds-excessive-agency-ai-failure)).
 
-*A replay, not a live recording. It sends the same event Claude Code sends and shows the block. This GIF is silent, because GIFs cannot carry sound. A version with the siren comes from a live recording.*
+Coding agents run commands with your permissions. A rule written in a prompt is a request. AgentCop is a check that runs before every tool call, and it decides in code.
 
-![The courtroom: a timeline of cases, a mugshot card, and a police blotter](docs/assets/courtroom.png)
+## How it works
 
-*The courtroom runs on your own machine, on 127.0.0.1, with a random token. The data above is made up.*
+```mermaid
+flowchart LR
+  A[Claude Code<br/>agent wants to run a tool] --> B[PreToolUse hook<br/>cop-hook]
+  B --> C{parse and judge<br/>Rust rules, Rule of Two}
+  C -->|allow| D[tool runs]
+  C -->|ask| E[Claude Code asks you]
+  C -->|deny| F[tool is blocked]
+  B --> G[(hash-chained<br/>evidence.db)]
+  F --> H[courtroom: case and mugshot]
+```
 
-## What it does
+The judge is deterministic Rust. No language model is on the allow or deny path. The detective is a separate, offline Python reader. It has no tools, and it can only raise a case's severity. It can never release anyone.
 
-- **Judge.** Rules in `policy/default.toml` (regex, strictest verdict wins). Blocks destructive removes of root or home, production deletes, secret-file reads, piping downloads into a shell, and attempts to stop or edit the cop. Asks before `git push`.
-- **Evidence.** Every decision goes into a SQLite store (`~/.agentcop/evidence.db`). Each row is hash-chained to the one before it, and `agentcop verify` checks the chain.
-- **Case numbers.** Every verdict ends with `[CASE-xxxxxxxxxxxx]`. `agentcop fix` turns a case into a deny rule you review before it is written.
-- **Rule of Two.** A session that takes in untrusted input (web results, downloads, cloned repo files), touches sensitive data, and takes an external action (an upload, a push, a network send) is frozen. A frozen session blocks only external actions; local work continues. Only a person ends a freeze, with `agentcop release <session>`.
-- **Log-only mode.** `mode = "log-only"` allows every call and records what would have been blocked. Use it to measure false positives before you enforce.
-- **Courtroom.** A local dashboard (`courtroom/`) that lists cases, shows a redacted mugshot card and PNG, and records release or convict decisions.
-- **Detective.** An offline Python reader (`detective/`) that can only raise a case's severity. Its output is schema-checked. It has no tools.
+## What happens when it catches something
+
+| Verdict | Sound today | What the agent and you see |
+| --- | --- | --- |
+| allow | none | nothing; the call runs |
+| ask | none | Claude Code asks you to confirm, with the reason and a case number |
+| deny | none | `Destructive remove on root or home [CASE-0123456789ab]` (example) |
+| honeytoken touched | none | `Honeytoken triggered: suspect took the bait [CASE-…]` (example) |
+| courtroom decision | synthesized gavel (courtroom only) | the decision appears in the timeline |
+
+The command-line hook is silent in this build. Its sound clips are not shipped, so it has nothing to play.
 
 ## Quick start
 
-Requires Rust (stable), and for the full check also Python 3.11+ with `pydantic` and `pytest`, and Node 20+ for the courtroom.
+Requires Rust (stable). Linux only.
 
 ```bash
 git clone <this repo> agentcop && cd agentcop
 cargo build --release -p cop-cli -p cop-hook
 
-./target/release/agentcop install --dry-run   # show what would change
-./target/release/agentcop install             # add the hook (backs up settings.json first)
+./target/release/agentcop install --dry-run   # show what would change, change nothing
+./target/release/agentcop install             # back up settings.json, add the hook
+./target/release/agentcop doctor              # health check, one line per check
 ```
 
-The hook records the path of the `cop-hook` binary it was installed from. Keep the build folder in place, or run `install` again after moving it.
+Example `doctor` output on a fresh install, after one session start (paths shortened):
 
-Day to day:
+```
+agentcop doctor (CLI 0.0.1)
+PASS  folder and file modes: ~/.agentcop 0700, files 0600
+PASS  hook path: $HOME/.claude/settings.json runs $HOME/.agentcop/bin/cop-hook
+PASS  installed hook is cop-hook 0.0.1
+PASS  policy canaries: every must-catch action is caught
+PASS  evidence chain verifies (2 rows)
+PASS  last session start (heartbeat): 2026-10-26T20:04:38.656582617-06:00
+PASS  mode: enforce (denials are enforced)
+PASS  no raw-data archives on disk
+Summary: 8 pass, 0 warn, 0 fail.
+```
+
+**Start in log-only mode** for a trial week. Log-only allows every call and records what would have been blocked. Edit `~/.agentcop/policy.toml` and set:
+
+```toml
+mode = "log-only"
+```
+
+Then, day to day:
 
 ```bash
-./target/release/agentcop cases               # list cases: CASE-id, verdict, time, reason
-./target/release/agentcop fix CASE-<id>       # suggest a deny rule for one case, asks before writing
-./target/release/agentcop verify              # check the evidence hash chain
-./target/release/agentcop uninstall           # restore settings.json from the backup
+./target/release/agentcop doctor                       # today's health; log-only shows one WARN
+./target/release/agentcop cases --today --would-block  # what enforce mode would have stopped today
+./target/release/agentcop cases show CASE-0123456789ab # one case in full (example ID)
+./target/release/agentcop verify                       # check the evidence hash chain
 ```
 
-Log-only mode, for a trial week: copy `policy/default.toml` to `~/.agentcop/policy.toml`, set `mode = "log-only"`, then `install`. The steps above are the whole procedure.
-
-Courtroom:
+When the trial is done, set `mode = "enforce"`. To remove AgentCop:
 
 ```bash
-cd courtroom && npm install && npm start      # prints a local URL with a random token
+./target/release/agentcop uninstall   # removes our two hook entries; settings become byte-identical to the backup
 ```
+
+Evidence stays after uninstall. `agentcop uninstall --purge` deletes it, after asking.
+
+Other commands: `agentcop cases` (list), `agentcop fix CASE-<id>` (suggest a deny rule, shows the diff, asks before writing), `agentcop release <session>` (end a Rule of Two freeze, logged).
 
 ## Locked out? Emergency steps
 
-If AgentCop refuses every tool call, the reason on screen says what is wrong and gives the exact command that fixes it. If the refusal itself blocks you, do this from a normal terminal (not from inside Claude Code):
+If AgentCop refuses every tool call, the reason on screen names the fix. For example, a group-writable state folder gives:
 
-1. Remove the AgentCop hook. Open `~/.claude/settings.json` and delete the entry under `hooks.PreToolUse` whose `command` contains `cop-hook`. Or restore the backup: `cp ~/.claude/settings.json.bak ~/.claude/settings.json`.
+```
+Error: $HOME/.agentcop is group- or world-writable (mode 770); refusing to run (fail closed). Fix it: run: chmod 700 $HOME/.agentcop
+```
+
+If the refusal blocks you, do this from a normal terminal, outside Claude Code:
+
+1. Remove the hook: restore the backup with `cp ~/.claude/settings.json.bak ~/.claude/settings.json`, or delete the `hooks.PreToolUse` entry whose `command` contains `cop-hook`.
 2. Restart Claude Code. Nothing is enforced while the hook is gone.
-3. Fix the permissions the refusal named, for example `chmod 700 ~/.agentcop` and `chmod 600 ~/.agentcop/*.db ~/.agentcop/hmac.key ~/.agentcop/policy.toml`.
-4. Run `agentcop install` again. It copies the hook to `~/.agentcop/bin`, points settings at it, and tightens the modes.
+3. Fix the modes the refusal named, for example `chmod 700 ~/.agentcop` and `chmod 600 ~/.agentcop/*.db ~/.agentcop/hmac.key ~/.agentcop/policy.toml`.
+4. Run `./target/release/agentcop install` again. It copies the hook to `~/.agentcop/bin` and tightens the modes.
 
-An old evidence store (raw commands) is archived automatically on the next run, to `~/.agentcop/evidence-legacy.db`. Nothing is deleted. `agentcop evidence purge-legacy` deletes archives, after asking.
+An old evidence store that holds raw commands is moved aside on the next run, to `~/.agentcop/evidence-legacy.db`. Nothing is deleted. `agentcop evidence purge-legacy` deletes archives, after asking.
 
-## Testing
+## What it does NOT catch
+
+- **Other agents and other platforms.** Claude Code only. Codex has a parser as library code, but nothing installs it. Only Linux has been tested.
+- **Anything the patterns did not anticipate.** Every rule is a regular expression on a command's steps. A new trick can pass.
+- **Indirect commands.** A script is read when a command runs it, but a script changed after that read is not checked again. Scripts run by `npm run`, `make` or `python x.py` are not read.
+- **HTTPS contents.** The egress proxy checks host names of HTTPS tunnels only, and it is not yet in the agent's path.
+- **Live kernel monitoring.** The eBPF and syscall sensors are library code tested with fixtures. Nothing loads a kernel probe.
+- **Process freezing.** The holding cell can freeze processes, but no running component calls it. A freeze blocks tool calls only.
+- **A trusted owner.** Anyone with root can change the hook, the policy or the evidence file. The evidence chain shows edits, not who made them.
+
+Full list, with the tests behind each: [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
+
+## AgentCop arrested its own builder
+
+I built AgentCop with Claude Code, and it was arrested more than once. The full story is in [BUILD-STORY.md](BUILD-STORY.md). The best highlights:
+
+- **The first "26 of 26 phases" was false.** Only 18 were done, and the hook's output format was wrong, so Claude Code would have ignored every decision. Tests now run the real binary.
+- **Read-only checks were denied as "disabling the cop".** A rule matched any mention of the cop's name. It now denies writes only.
+- **A grep for `\.env(` set the secret flag.** Secret files are now matched by file name from the parsed command, not by text.
+- **My own umask locked me out.** A group-writable state folder made the hook refuse every tool call. The refusal now names the fix.
+- **One quoting edit let `rm -rf /` through.** The policy canaries now catch it, and install refuses a policy that allows any of them.
+
+## Status and roadmap
+
+- **Now:** v0.1 candidate. Claude Code hook, command-line tool, evidence store, Rule of Two, log-only mode, courtroom dashboard (local, on 127.0.0.1).
+- **Log-only trial week:** starts Tuesday 27 October 2026.
+- **Next:** Codex install path; egress proxy in the agent's path; live eBPF sensors; the courtroom releasing and thawing sessions.
+- **Planned, not built:** "Escape the Cop", a game idea. There is no design yet.
+
+## Contributing
+
+Issues and pull requests are welcome. Run `./scripts/check.sh` before you send a change. It runs format, clippy (warnings are errors), all Rust tests, the Python detective tests, the courtroom checks and the attack suite.
+
+## Testing and layout
 
 ```bash
 ./scripts/check.sh
 ```
 
-This runs format, clippy (warnings are errors), all Rust tests, the Python detective tests, the courtroom typecheck, build and Playwright tests, and the attack suite. Each run writes its results to a local report.
-
-## Layout
-
 | Path | What it is |
 | --- | --- |
 | `crates/cop-hook` | The hook binary Claude Code calls for every tool use |
-| `crates/cop-cli` | `agentcop` CLI: install, uninstall, cases, fix, verify |
-| `crates/cop-policy` | Policy loading, rule matching, mode |
-| `crates/cop-evidence` | Hash-chained SQLite evidence store |
+| `crates/cop-cli` | `agentcop`: install, uninstall, doctor, cases, fix, verify, release |
+| `crates/cop-policy` | Policy loading, rules, canaries, mode |
+| `crates/cop-shell` | Parses shell commands into the steps they would run; secret file names |
 | `crates/cop-taint` | Rule of Two |
-| `crates/cop-proxy` | Egress proxy: domain allowlist and secret scan on plaintext HTTP |
-| `crates/cop-cell` | Holding cell: cgroup freeze with SIGSTOP fallback |
-| `crates/cop-bundle` | Case bundle for the detective, with untrusted text quoted and capped |
-| `detective/` | Python detective (raise-only severity) |
+| `crates/cop-evidence` | Hash-chained SQLite evidence store |
+| `detective/` | Offline Python reader (can only raise severity) |
 | `courtroom/` | Local dashboard (TypeScript, React, Node) |
 | `tests/attacks/` | Attack corpus and runner |
 | `policy/` | Rule files: `default.toml`, `taint.toml`, `egress.toml` |
 
+## FAQ
+
+**Is this a real police thing?** No. It is a cartoon for a developer tool. It arrests nobody and has no badge.
+
+**Will it stop every bad command?** No. It stops what its rules match. See [what it does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
+
+**Can I try it without blocking anything?** Yes. Set `mode = "log-only"` in `~/.agentcop/policy.toml`. Every call is allowed, and the would-be blocks are recorded for review.
+
+**Why case numbers?** So you can ask "why was that blocked?" and get a record. `agentcop cases show` prints one.
+
 ## Docs
 
 - [THREAT_MODEL.md](THREAT_MODEL.md): what AgentCop defends against, and what it does not.
+- [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md): the known misses.
+- [BUILD-STORY.md](BUILD-STORY.md): how it was built, and how it arrested its builder.
 - [CHANGELOG.md](CHANGELOG.md)
-- [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md)
-
-## FAQ
-
-**Is this a real police thing?** No. It is a cartoon for a developer tool. It does not arrest anyone, and it has no badge.
-
-**Will it stop every bad command?** No. It stops the ones its rules match. See [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
-
-**Can I turn off the sirens?** Yes. The courtroom has a Sound on/off button, and the sound pack can be left out.
-
-**Can I try it without blocking anything?** Yes. Set `mode = "log-only"` in the policy. Every call is allowed, and the would-be blocks are recorded for review.
-
-**Why case numbers?** So you can ask "why was that blocked?" and get a record. `agentcop cases` and `agentcop fix` use them.
 
 ## License
 

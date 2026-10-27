@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","session_id":"demo-session","tool_name":"Bash","tool_input":{"command":"echo FAKE_AWS_KEY_12345"},"cwd":"/tmp/demo-project"}
