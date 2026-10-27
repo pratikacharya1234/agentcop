@@ -193,7 +193,8 @@ fn yes_appends_one_deny_rule_matching_exactly_that_command() {
 #[test]
 fn regex_characters_and_quotes_are_escaped() {
     let sb = Sandbox::new();
-    let cmd = r#"echo "a.b*c" (x)"#;
+    // Valid bash with regex special characters. `(x)` bare is a syntax error, so it is quoted.
+    let cmd = r#"echo "a.b*c" "(x)""#;
     let id = sb.seed(&bash(cmd), Verdict::Deny);
     let out = sb.run(&["fix", &id], "y\n");
     assert!(
@@ -203,7 +204,7 @@ fn regex_characters_and_quotes_are_escaped() {
     );
     assert_eq!(sb.judge_with_current_policy(&bash(cmd)), Verdict::Deny);
     assert_eq!(
-        sb.judge_with_current_policy(&bash(r#"echo "aXb*c" (x)"#)),
+        sb.judge_with_current_policy(&bash(r#"echo "aXb*c" "(x)""#)),
         Verdict::Allow,
         "the dot and star must not act as wildcards"
     );

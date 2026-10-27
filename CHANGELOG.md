@@ -16,11 +16,11 @@
 - Case bundle (`cop-bundle`) with a JSON schema: agent text is quoted and size-capped.
 - Python detective (`detective/`): raise-only severity, strict output schema, no tools, offline template provider.
 - Courtroom (`courtroom/`): local dashboard on 127.0.0.1 with a random token: timeline, mugshot card and PNG (redacted), Release and Convict decisions in a hash-chained file, blotter, Wanted list, ranks, synthesized sound with mute.
-- Attack suite (`tests/attacks/`): 36 hook and detective cases, run by `scripts/check.sh`. Results in `docs/internal-affairs.md`.
+- Attack suite (`tests/attacks/`): 36 hook and detective cases, run by `scripts/check.sh`.
 - Sound pack validator and a default pack (`courtroom/sound-packs/default`).
 
 ### Changed
 - Cop-protection rules deny writes only. Reads of cop state and settings are allowed.
 
 ### Known limits
-See [docs/what-agentcop-does-not-catch.md](docs/what-agentcop-does-not-catch.md).
+See [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md).

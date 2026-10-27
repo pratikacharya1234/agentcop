@@ -32,3 +32,10 @@ courtroom/dist/
 courtroom/test-results/
 courtroom/playwright-report/
 courtroom/.vite/
+
+# Internal notes: kept local, not on GitHub
+brain.md
+CLAUDE.md
+AgentCop Master Build Plan and Claude Code Prompt.md
+docs/*
+!docs/assets/

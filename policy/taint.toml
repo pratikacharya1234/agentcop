@@ -2,6 +2,7 @@
 # and takes an external action is frozen. Empty sensitive or external lists are refused.
 untrusted_tools = ["Read", "Grep", "Glob", "WebFetch", "WebSearch"]
 untrusted_bash = ['\b(cat|head|tail|less|more|grep|rg|jq)\b']
+# Matched against what a command does (its words and write targets), not against text in heredocs.
 sensitive = [
   '\.env\b',
   '\.ssh\b',
@@ -10,6 +11,9 @@ sensitive = [
   'credentials',
   '/etc/shadow',
   '\.netrc',
+]
+# Matched against the raw command: a secret-looking value is sensitive wherever it is written.
+sensitive_content = [
   'AKIA[0-9A-Z]{16}',
 ]
 external = [

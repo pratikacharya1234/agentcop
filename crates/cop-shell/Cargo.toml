@@ -1,0 +1,10 @@
+[package]
+name = "cop-shell"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-bash = "0.25"

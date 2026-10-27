@@ -79,6 +79,13 @@ impl Judge {
     }
 
     /// Judge an event and return a verdict (Deny > Ask > Allow)
+    ///
+    /// PLAN (C2-R):
+    /// 1. Honeytokens match the raw text first. Any mention is a trigger.
+    /// 2. A Bash command is parsed (cop-shell). A command we cannot parse is denied (fail closed).
+    /// 3. A rule with scope "bash" matches the action lines of the parsed command (exec, write, pipe).
+    /// 4. Any other rule matches the raw text, as before.
+    /// 5. The strictest verdict wins.
     pub fn judge(&self, event: &AgentEvent) -> (Verdict, String) {
         // Combine tool name and input into a searchable string
         let searchable = format!("{} {}", event.tool_name, event.tool_input);
@@ -92,6 +99,35 @@ impl Judge {
                     .to_string();
                 return (Verdict::Deny, reason_str);
             }
+        }
+
+        let is_bash = event.tool_name.eq_ignore_ascii_case("bash");
+        let actions = if is_bash {
+            // Claude Code sends {"command": "..."}. Anything else is unreadable, so deny it.
+            let Some(command) = event.tool_input["command"].as_str() else {
+                return (
+                    Verdict::Deny,
+                    "Bash input has no command text; denied (fail closed)".to_string(),
+                );
+            };
+            let analysis = cop_shell::analyze(command);
+            if analysis.unparsed {
+                return (
+                    Verdict::Deny,
+                    "Could not read the shell command; denied (fail closed)".to_string(),
+                );
+            }
+            analysis.actions
+        } else {
+            Vec::new()
+        };
+
+        let writes: Vec<&str> = actions
+            .iter()
+            .filter_map(|a| a.strip_prefix("write "))
+            .collect();
+        if let Some(reason) = hook_entry_change(event, &writes) {
+            return (Verdict::Deny, reason.to_string());
         }
 
         // Track the strictest verdict found
@@ -108,8 +144,14 @@ impl Judge {
                 }
             }
 
-            // If pattern matches, check if this verdict is stricter
-            if pattern.is_match(&searchable) {
+            // Scoped Bash rules see what the command does; everything else sees the raw text.
+            let matched = if is_bash && scope.is_some() {
+                actions.iter().any(|line| pattern.is_match(line))
+            } else {
+                pattern.is_match(&searchable)
+            };
+
+            if matched {
                 let verdict = parse_verdict(verdict_str);
                 let reason_str = reason.as_deref().unwrap_or("Rule matched").to_string();
 
@@ -122,6 +164,47 @@ impl Judge {
 
         (strictest, strictest_reason)
     }
+}
+
+/// Built-in guard (code, not TOML: it needs to read the file before a full rewrite).
+/// A change that removes or alters the AgentCop hook entry in a project settings file is denied.
+/// Returns the deny reason, or None when the rules in the policy file decide.
+///
+/// PLAN:
+/// 1. Edit / MultiEdit: deny when an old_string holds the hook command (any change to it).
+/// 2. Write: deny when the file holds the hook now and the new content does not.
+/// 3. Bash: deny when the command names the hook and writes a project settings file.
+fn hook_entry_change(event: &AgentEvent, bash_writes: &[&str]) -> Option<&'static str> {
+    const HOOK: &str = "cop-hook";
+    const REASON: &str = "Would remove or change the AgentCop hook entry in project settings";
+    let input = &event.tool_input;
+    let file = input["file_path"].as_str().unwrap_or("");
+    let names_hook = |s: Option<&str>| s.is_some_and(|text| text.contains(HOOK));
+    let hit = match event.tool_name.as_str() {
+        "Edit" => is_project_settings(file) && names_hook(input["old_string"].as_str()),
+        "MultiEdit" => {
+            is_project_settings(file)
+                && input["edits"]
+                    .as_array()
+                    .is_some_and(|edits| edits.iter().any(|e| names_hook(e["old_string"].as_str())))
+        }
+        "Write" => {
+            is_project_settings(file)
+                && std::fs::read_to_string(file).is_ok_and(|old| old.contains(HOOK))
+                && !names_hook(input["content"].as_str())
+        }
+        name if name.eq_ignore_ascii_case("bash") => {
+            names_hook(input["command"].as_str())
+                && bash_writes.iter().any(|w| is_project_settings(w))
+        }
+        _ => false,
+    };
+    hit.then_some(REASON)
+}
+
+/// Project-level Claude Code settings (not the global ~/.claude one, which the TOML rules deny).
+fn is_project_settings(path: &str) -> bool {
+    path.ends_with(".claude/settings.json") || path.ends_with(".claude/settings.local.json")
 }
 
 /// Parse a verdict string into the Verdict enum

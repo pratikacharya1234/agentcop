@@ -81,9 +81,11 @@ pub fn suggest_rule(event: &AgentEvent, case_id: &str) -> Result<Rule, String> {
         "\"command\":{}",
         serde_json::to_string(command).map_err(|e| e.to_string())?
     );
+    // No scope: an unscoped rule matches the raw text, which is the exact command. A scoped Bash rule
+    // matches parsed actions instead, so it would never fire on this text (C2-R).
     Ok(Rule {
         pattern: regex::escape(&needle),
-        scope: Some(event.tool_name.clone()),
+        scope: None,
         verdict: "deny".to_string(),
         reason: Some(format!("Blocked by {case_id} (agentcop fix)")),
     })

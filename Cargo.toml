@@ -20,6 +20,7 @@ members = [
   "crates/cop-cell",
   "crates/cop-bundle",
   "crates/cop-taint",
+  "crates/cop-shell",
 ]
 
 [workspace.package]

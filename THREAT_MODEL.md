@@ -65,11 +65,12 @@
 - **Holding cell (D5)**: freezing relies on cgroup v2 when available. Without it, SIGSTOP stops only the pids the caller gives us. A process the caller did not list keeps running. The cop refuses to freeze pid 1 and itself.
 - **Detective (E2)**: the detective can only raise severity, and a lowering reply is ignored. A model can still be talked into raising severity (a false alarm). Only the offline template provider is built. No real model is wired in yet.
 - **Fix (E3)**: `agentcop fix` only appends exact-match deny rules, after a human answers yes. It never adds an allow rule. It refuses allow-verdict cases and tools with no command. A person still has to review the diff, so the agent cannot use it to change its own rules.
-- **Attack suite (E4)**: 33 corpus cases and 3 detective cases. Known misses are listed (base64 pipes and command substitution need the normalizer). The suite is a sample, not a proof.
+- **Attack suite (E4)**: 74 corpus cases and 3 detective cases, 0 known gaps. The suite is a sample, not a proof. Its cases do not cover script files run from disk (see the shell parser bullet).
 - **Courtroom (F1)**: binds 127.0.0.1 only, with a random token that is compared in constant time. The token is held in sessionStorage for the tab, so any script on the same origin could read it (the origin serves only this app). Decisions are recorded, but they do not thaw the holding cell yet.
 - **Blotter and redaction (F2a)**: the courtroom redacts three secret shapes (AWS keys, PEM private keys, GitHub tokens) on the server before output. Other secret shapes are not redacted. The list is a copy of the egress patterns.
 - **Mugshot PNG and sound packs (F2b)**: the PNG is drawn from redacted text only (redaction runs in the renderer too). Sound packs are validated (bare file names, WAV only, length and peak limits), but are not played yet.
-- **Cop protection (narrowed)**: the rules deny writes to cop state, settings, policy and cop code. Reads are allowed. A write made with a verb the Bash rule does not list is not caught (see docs/phases/policy-narrowing.md).
+- **Cop protection**: the rules deny writes to `~/.agentcop/` and `~/.claude/settings(.local).json`. Reads are allowed. Repo `policy/` sources are editable by design. Project `CLAUDE.md` and project `.claude/settings(.local).json` ask before any change (Bash and the file tools). A change that removes or alters the AgentCop hook entry in a project settings file is denied. Inline interpreter code (`python3 -c`, `sqlite3`) that names `.agentcop` or `.claude/settings` is denied; other inline code is judged as text and is allowed.
+- **Shell parser (C2-R)**: Bash is parsed with tree-sitter-bash. A command it cannot read is denied. A command whose name is built at run time (`$( )`, a variable, a backtick), `eval` of a variable, a decoded payload (`base64 -d`, `xxd -r`), or text piped into a shell or interpreter asks for approval. The parser does not expand variables in arguments (`rm -rf $X`), decode payloads, read script files run from disk (`bash x.sh`, `./x.sh`), or follow `pushd`, subshell `cd`, `scp` or `rsync` targets. A bare `echo .env` is denied because argument words are matched.
 - **Performance under load**: copd and sensors are untested under 1000+ concurrent agents; performance may degrade.
 
 ## Revision history
@@ -85,3 +86,4 @@
 | 0.0.7 | 2026-10-23 | F1: courtroom limits added |
 | 0.0.8 | 2026-10-23 | F2a: blotter and redaction limits added |
 | 0.0.9 | 2026-10-23 | F2b: mugshot PNG and sound pack limits added |
+| 0.0.10 | 2026-10-26 | C2-R: shell parser, action-based rules, installed-state protection only |

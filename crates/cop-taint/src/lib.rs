@@ -28,6 +28,8 @@ struct RulesFile {
     #[serde(default)]
     untrusted_bash: Vec<String>,
     sensitive: Vec<String>,
+    #[serde(default)]
+    sensitive_content: Vec<String>,
     external: Vec<String>,
 }
 
@@ -36,6 +38,7 @@ pub struct TaintRules {
     untrusted_tools: Vec<String>,
     untrusted_bash: Vec<Regex>,
     sensitive: Vec<Regex>,
+    sensitive_content: Vec<Regex>,
     external: Vec<Regex>,
 }
 
@@ -51,6 +54,7 @@ impl TaintRules {
             untrusted_tools: file.untrusted_tools,
             untrusted_bash: compile(&file.untrusted_bash)?,
             sensitive: compile(&file.sensitive)?,
+            sensitive_content: compile(&file.sensitive_content)?,
             external: compile(&file.external)?,
         })
     }
@@ -63,22 +67,51 @@ fn compile(patterns: &[String]) -> Result<Vec<Regex>, String> {
         .collect()
 }
 
-/// What this one event adds. Matching uses the same "tool_name + input JSON" text the judge uses.
+/// What this one event adds.
+///
+/// PLAN (C2-R):
+/// 1. Bash: judge what the command does. The patterns see the parsed action lines (exec, write, pipe),
+///    so heredoc text and quoted strings do not count.
+/// 2. Bash content patterns (secret-looking keys) still scan the raw command, because a key written into a file is still a key.
+/// 3. A Bash command that cannot be parsed adds only the content flag. The judge denies it.
+/// 4. Other tools: the raw tool name and input, as before. MCP tools always count as external.
 pub fn classify(event: &AgentEvent, rules: &TaintRules) -> Flags {
+    if event.tool_name.eq_ignore_ascii_case("Bash") {
+        return classify_bash(event, rules);
+    }
     let text = format!("{} {}", event.tool_name, event.tool_input);
-    let is_bash = event.tool_name.eq_ignore_ascii_case("Bash");
     let untrusted = rules
         .untrusted_tools
         .iter()
-        .any(|t| t.eq_ignore_ascii_case(&event.tool_name))
-        || (is_bash && rules.untrusted_bash.iter().any(|re| re.is_match(&text)));
-    let sensitive = rules.sensitive.iter().any(|re| re.is_match(&text));
-    let external = event.tool_name.starts_with("mcp__")
-        || (is_bash && rules.external.iter().any(|re| re.is_match(&text)));
+        .any(|t| t.eq_ignore_ascii_case(&event.tool_name));
+    let sensitive = rules.sensitive.iter().any(|re| re.is_match(&text))
+        || rules.sensitive_content.iter().any(|re| re.is_match(&text));
     Flags {
         untrusted,
         sensitive,
-        external,
+        external: event.tool_name.starts_with("mcp__"),
+        frozen: false,
+    }
+}
+
+fn classify_bash(event: &AgentEvent, rules: &TaintRules) -> Flags {
+    let command = event.tool_input["command"].as_str().unwrap_or("");
+    let content = rules
+        .sensitive_content
+        .iter()
+        .any(|re| re.is_match(command));
+    let analysis = cop_shell::analyze(command);
+    if analysis.unparsed {
+        return Flags {
+            sensitive: content,
+            ..Flags::default()
+        };
+    }
+    let actions = analysis.actions.join("\n");
+    Flags {
+        untrusted: rules.untrusted_bash.iter().any(|re| re.is_match(&actions)),
+        sensitive: content || rules.sensitive.iter().any(|re| re.is_match(&actions)),
+        external: rules.external.iter().any(|re| re.is_match(&actions)),
         frozen: false,
     }
 }

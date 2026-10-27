@@ -23,14 +23,29 @@ pattern = "prod.*delete"
 verdict = "deny"
 reason = "Destructive action on production"
 
-# Secret files
+# Secret files. Scoped to Bash: the judge matches what the command does (its executed words and
+# write targets), not text inside heredocs or quotes. `.env.local`, `.env.production` etc. match `\.env\b`.
 [[rules]]
-pattern = "\\.env"
+pattern = "\\.env\\b"
+scope = "bash"
 verdict = "deny"
 reason = "Reading or writing secrets file"
 
 [[rules]]
-pattern = "\\.ssh"
+pattern = "\\.ssh\\b"
+scope = "bash"
+verdict = "deny"
+reason = "Accessing SSH keys"
+
+# Other tools (Read, Edit, Write, ...) name the file in file_path. Only that field counts,
+# so text inside another tool's content does not trigger these rules.
+[[rules]]
+pattern = '"file_path":"[^"]*\.env\b'
+verdict = "deny"
+reason = "Reading or writing secrets file"
+
+[[rules]]
+pattern = '"file_path":"[^"]*\.ssh\b'
 verdict = "deny"
 reason = "Accessing SSH keys"
 
@@ -40,13 +55,16 @@ verdict = "deny"
 reason = "Cloud credential exposure"
 
 # Shell command injection
+# Pipelines are matched as `pipe <stage> | <stage>` action lines.
 [[rules]]
 pattern = "curl.*\\|.*sh"
+scope = "bash"
 verdict = "deny"
 reason = "Piping untrusted data to shell"
 
 [[rules]]
 pattern = "wget.*\\|.*sh"
+scope = "bash"
 verdict = "deny"
 reason = "Piping untrusted data to shell"
 
@@ -76,17 +94,63 @@ scope = "bash"
 verdict = "deny"
 reason = "Attempt to stop the cop service"
 
-# Cop state: writes to policy, evidence and config. Reads are allowed.
+# Cop state (installed copy only): ~/.agentcop/ (policy, evidence, hook, sessions) and the Claude
+# Code settings that hold the hook. Repo sources such as policy/default.toml are normal development.
+# Edit and Write name the file in file_path (raw JSON text).
 [[rules]]
-pattern = '^(Edit|Write|MultiEdit|NotebookEdit) .*"file_path":"[^"]*(\.agentcop/|CLAUDE\.md|settings\.json|cop-(policy|evidence|hook|cli)|policy/)'
+pattern = '^(Edit|Write|MultiEdit|NotebookEdit) .*"file_path":"(?:~|/home/[^/"]+|/root)/(?:\.agentcop/|\.claude/settings(?:\.local)?\.json")'
 verdict = "deny"
 reason = "Attempt to change cop state (policy, evidence or config)"
 
-# Shell writes (redirect, tee, sed -i, rm, mv, cp, ...) that touch cop state or settings. Reads are allowed.
+# Bash: a write action (redirect, tee, sed -i, rm, mv, cp, ...) whose target is installed cop state.
+# Reads, stderr redirects (2>&1, 2>/dev/null) and repo paths are not writes to cop state.
 [[rules]]
-pattern = '^Bash .*(>|\btee\b|\bsed\s+-i|\brm\b|\bmv\b|\bcp\b|\btruncate\b|\bshred\b|\bdd\b|\bchmod\b|\bchown\b|\bln\b).*(\.agentcop/|CLAUDE\.md|settings\.json|cop-(policy|evidence|hook|cli)|policy/)'
+pattern = '^write (?:~|/home/[^/\s]+|/root)/(?:\.agentcop(?:/|$)|\.claude/settings(?:\.local)?\.json$)'
+scope = "bash"
 verdict = "deny"
 reason = "Attempt to change cop state or settings"
+
+# Uncertain: the command runs something we cannot read statically (a name built by $( ), a variable
+# or a backtick; eval of a variable; decoded payloads; text piped into a shell or interpreter).
+# Ask, never allow. A rule that denies the same command still wins (strictest verdict).
+[[rules]]
+pattern = '^uncertain '
+scope = "bash"
+verdict = "ask"
+reason = "Cannot tell statically what this command runs"
+
+# Inline code (python -c, node -e, perl -e, sqlite3, sh script) that names protected state: deny.
+# Code that does not name protected state stays allowed; that is a known limit (see THREAT_MODEL).
+[[rules]]
+pattern = '^inline .*(\.agentcop|\.claude/settings)'
+scope = "bash"
+verdict = "deny"
+reason = "Inline code touches protected state"
+
+# Project instructions (CLAUDE.md) are read by the agent in later sessions: ask before any change.
+[[rules]]
+pattern = '"file_path":"[^"]*CLAUDE\.md"'
+verdict = "ask"
+reason = "Changing project instructions (CLAUDE.md)"
+
+[[rules]]
+pattern = '^write (?:.*/)?CLAUDE\.md$'
+scope = "bash"
+verdict = "ask"
+reason = "Changing project instructions (CLAUDE.md)"
+
+# Project Claude Code settings: ask before any change. A change that removes or alters the AgentCop
+# hook entry is denied by the judge's hook-entry guard (cop-policy), not by this rule.
+[[rules]]
+pattern = '"file_path":"[^"]*\.claude/settings(?:\.local)?\.json"'
+verdict = "ask"
+reason = "Changing project Claude Code settings"
+
+[[rules]]
+pattern = '^write (?:.*/)?\.claude/settings(?:\.local)?\.json$'
+scope = "bash"
+verdict = "ask"
+reason = "Changing project Claude Code settings"
 
 # Honeytokens (planted decoys)
 [[honeytokens]]

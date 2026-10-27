@@ -10,7 +10,7 @@
 
 **AgentCop is a cartoon police officer for AI coding agents.** It stands between the agent and your computer. When the agent tries something dangerous, AgentCop stops it, writes it down, and gives the case a number.
 
-> **Status: pre-release (v0.1 candidate).** Claude Code only, Linux first. It is a seatbelt, not a force field. The rules are only as good as their patterns, and some things get past them. Read [what AgentCop does not catch](docs/what-agentcop-does-not-catch.md) before you rely on it.
+> **Status: pre-release (v0.1 candidate).** Claude Code only, Linux first. It is a seatbelt, not a force field. The rules are only as good as their patterns, and some things get past them. Read [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md) before you rely on it.
 >
 > AgentCop is an unofficial hobby project. It has no connection to any police force, and it does not impersonate one. The sirens are optional, and there is a mute button.
 
@@ -57,7 +57,7 @@ Day to day:
 ./target/release/agentcop uninstall           # restore settings.json from the backup
 ```
 
-Log-only mode, for a trial week: copy `policy/default.toml` to `~/.agentcop/policy.toml`, set `mode = "log-only"`, then `install`. Full steps are in [docs/phases/log-only.md](docs/phases/log-only.md).
+Log-only mode, for a trial week: copy `policy/default.toml` to `~/.agentcop/policy.toml`, set `mode = "log-only"`, then `install`. The steps above are the whole procedure.
 
 Courtroom:
 
@@ -71,7 +71,7 @@ cd courtroom && npm install && npm start      # prints a local URL with a random
 ./scripts/check.sh
 ```
 
-This runs format, clippy (warnings are errors), all Rust tests, the Python detective tests, the courtroom typecheck, build and Playwright tests, and the attack suite. The attack suite results are in [docs/internal-affairs.md](docs/internal-affairs.md).
+This runs format, clippy (warnings are errors), all Rust tests, the Python detective tests, the courtroom typecheck, build and Playwright tests, and the attack suite. Each run writes its results to a local report.
 
 ## Layout
 
@@ -94,15 +94,13 @@ This runs format, clippy (warnings are errors), all Rust tests, the Python detec
 
 - [THREAT_MODEL.md](THREAT_MODEL.md): what AgentCop defends against, and what it does not.
 - [CHANGELOG.md](CHANGELOG.md)
-- [docs/what-agentcop-does-not-catch.md](docs/what-agentcop-does-not-catch.md)
-- [docs/gates/gate-a.md](docs/gates/gate-a.md): live block record.
-- [docs/phases/](docs/phases/): one report per build phase.
+- [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md)
 
 ## FAQ
 
 **Is this a real police thing?** No. It is a cartoon for a developer tool. It does not arrest anyone, and it has no badge.
 
-**Will it stop every bad command?** No. It stops the ones its rules match. See [what AgentCop does not catch](docs/what-agentcop-does-not-catch.md).
+**Will it stop every bad command?** No. It stops the ones its rules match. See [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
 
 **Can I turn off the sirens?** Yes. The courtroom has a Sound on/off button, and the sound pack can be left out.
 

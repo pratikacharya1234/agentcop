@@ -181,7 +181,7 @@ mod tests {
             "hook_type": "PreToolUse",
             "timestamp": "2026-10-20T10:00:00Z",
             "tool_name": "bash",
-            "tool_input": "echo hello",
+            "tool_input": { "command": "echo hello" },
             "session_id": "sess-123",
             "user_id": "user-456"
         })
@@ -200,7 +200,7 @@ mod tests {
             "hook_type": "PreToolUse",
             "timestamp": "2026-10-20T10:00:00Z",
             "tool_name": "bash",
-            "tool_input": "rm -rf /",
+            "tool_input": { "command": "rm -rf /" },
             "session_id": "sess-123",
             "user_id": "user-456"
         })
@@ -248,7 +248,7 @@ mod tests {
             "hook_type": "PreToolUse",
             "timestamp": "2026-10-20T10:00:00Z",
             "tool_name": "bash",
-            "tool_input": "git push origin main",
+            "tool_input": { "command": "git push origin main" },
             "session_id": "sess-123",
             "user_id": "user-456"
         })
@@ -267,7 +267,7 @@ mod tests {
             "hook_type": "PreToolUse",
             "timestamp": "2026-10-20T10:00:00Z",
             "tool_name": "bash",
-            "tool_input": "ls -la",
+            "tool_input": { "command": "ls -la" },
             "session_id": "sess-123",
             "user_id": "user-456"
         })
