@@ -50,16 +50,53 @@ fn main() {
     }
 }
 
+/// Resolve policy path at runtime from multiple sources
+fn resolve_policy_path() -> Result<PathBuf, String> {
+    // 1. Check AGENTCOP_POLICY environment variable
+    if let Ok(path) = std::env::var("AGENTCOP_POLICY") {
+        let policy_path = PathBuf::from(path);
+        if policy_path.exists() {
+            return Ok(policy_path);
+        }
+        return Err(format!(
+            "AGENTCOP_POLICY points to non-existent file: {:?}",
+            policy_path
+        ));
+    }
+
+    // 2. Check ~/.agentcop/policy.toml
+    if let Some(home) = dirs::home_dir() {
+        let home_policy = home.join(".agentcop/policy.toml");
+        if home_policy.exists() {
+            return Ok(home_policy);
+        }
+    }
+
+    // 3. Check ./policy/default.toml (for repo root execution)
+    let cwd_policy = std::env::current_dir().ok().and_then(|cwd| {
+        let path = cwd.join("policy/default.toml");
+        if path.exists() {
+            Some(path)
+        } else {
+            None
+        }
+    });
+
+    if let Some(path) = cwd_policy {
+        return Ok(path);
+    }
+
+    Err(
+        "Policy file not found. Set AGENTCOP_POLICY env var or place policy.toml in ~/.agentcop/"
+            .to_string(),
+    )
+}
+
 fn run() -> Result<(), String> {
     let start = std::time::Instant::now();
 
-    // Load policy from policy/default.toml
-    let policy_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .ok_or("Failed to find crate parent")?
-        .parent()
-        .ok_or("Failed to find repo root")?
-        .join("policy/default.toml");
+    // Load policy from resolved path at runtime
+    let policy_path = resolve_policy_path()?;
 
     let policy_toml =
         fs::read_to_string(&policy_path).map_err(|e| format!("Failed to read policy: {}", e))?;
