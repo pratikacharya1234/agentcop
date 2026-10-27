@@ -12,6 +12,7 @@
 use cop_core::{AgentEvent, Case, Verdict};
 use cop_evidence::EvidenceStore;
 use cop_policy::{Judge, Policy};
+use cop_siren::{SoundEvent, SoundPlayer};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{self, Read};
@@ -57,6 +58,9 @@ fn run() -> Result<(), String> {
     // Create judge from policy
     let judge = Judge::new(policy).map_err(|e| format!("Failed to create judge: {}", e))?;
 
+    // Create sound player (for background audio playback)
+    let player = SoundPlayer::new();
+
     // Create or open evidence store
     let evidence_dir = dirs::home_dir()
         .ok_or("Failed to find home directory")?
@@ -92,7 +96,7 @@ fn run() -> Result<(), String> {
         .append(&case)
         .map_err(|e| format!("Failed to append to evidence: {}", e))?;
 
-    // Output verdict JSON
+    // Output verdict JSON (before playing sound, so it returns immediately)
     let verdict_str = match verdict {
         Verdict::Allow => "allow",
         Verdict::Ask => "ask",
@@ -106,6 +110,14 @@ fn run() -> Result<(), String> {
 
     serde_json::to_writer(io::stdout(), &response)
         .map_err(|e| format!("Failed to write response: {}", e))?;
+
+    // Play sound in background (never blocks verdict return)
+    let sound_event = match verdict {
+        Verdict::Allow => SoundEvent::Allow,
+        Verdict::Ask => SoundEvent::Ask,
+        Verdict::Deny => SoundEvent::Deny,
+    };
+    player.play(sound_event);
 
     let elapsed = start.elapsed();
     eprintln!(
@@ -139,5 +151,22 @@ mod tests {
         };
         let json = serde_json::to_string(&allow_response).unwrap();
         assert!(json.contains("\"allow\""));
+    }
+
+    #[test]
+    fn sound_event_maps_to_verdict() {
+        let allow_event = match Verdict::Allow {
+            Verdict::Allow => SoundEvent::Allow,
+            Verdict::Ask => SoundEvent::Ask,
+            Verdict::Deny => SoundEvent::Deny,
+        };
+        assert_eq!(allow_event, SoundEvent::Allow);
+
+        let deny_event = match Verdict::Deny {
+            Verdict::Allow => SoundEvent::Allow,
+            Verdict::Ask => SoundEvent::Ask,
+            Verdict::Deny => SoundEvent::Deny,
+        };
+        assert_eq!(deny_event, SoundEvent::Deny);
     }
 }
