@@ -8,6 +8,7 @@
 //! 5. Implement cases: list evidence (stub for A6)
 //! 6. Support --dry-run, idempotent operations
 
+mod cases;
 mod doctor;
 mod evidence_cmd;
 mod fix;
@@ -15,7 +16,6 @@ mod install;
 mod release;
 
 use clap::{Parser, Subcommand};
-use cop_evidence::EvidenceStore;
 
 #[derive(Parser)]
 #[command(name = "agentcop")]
@@ -42,6 +42,16 @@ enum EvidenceCommand {
     PurgeLegacy,
 }
 
+/// `agentcop cases show <ID>`: one case in full
+#[derive(Subcommand)]
+enum CasesCommand {
+    /// Show one case: its event (already redacted), verdict, reason and hash
+    Show {
+        /// Case ID, e.g. CASE-0123456789ab
+        case_id: String,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Install agentcop into Claude Code
@@ -65,8 +75,20 @@ enum Commands {
     },
     /// Verify evidence chain integrity
     Verify,
-    /// List recent cases
-    Cases,
+    /// List cases, or show one. Filters: --today, --since, --would-block
+    Cases {
+        #[command(subcommand)]
+        action: Option<CasesCommand>,
+        /// Only cases from today (local time)
+        #[arg(long)]
+        today: bool,
+        /// Only cases at or after this time: YYYY-MM-DD (local midnight) or an RFC 3339 time
+        #[arg(long, value_name = "WHEN")]
+        since: Option<String>,
+        /// Only cases log-only mode did not enforce (the ones enforce mode would have stopped)
+        #[arg(long)]
+        would_block: bool,
+    },
     /// Evidence housekeeping: archive legacy evidence, or purge archives (asks first)
     Evidence {
         #[command(subcommand)]
@@ -102,7 +124,21 @@ fn run(cli: Cli) -> Result<(), String> {
             PolicyCommand::Check { file } => doctor::policy_check(file),
         },
         Commands::Verify => evidence_cmd::verify(),
-        Commands::Cases => cases(),
+        Commands::Cases {
+            action,
+            today,
+            since,
+            would_block,
+        } => {
+            let home = dirs::home_dir().ok_or("Failed to find home directory")?;
+            match action {
+                Some(CasesCommand::Show { case_id }) => cases::show(&home, &case_id),
+                None => {
+                    let filter = cases::Filter::from_flags(today, since.as_deref(), would_block)?;
+                    cases::list(&home, &filter)
+                }
+            }
+        }
         Commands::Evidence { action } => match action {
             EvidenceCommand::ArchiveLegacy => evidence_cmd::archive_legacy(),
             EvidenceCommand::PurgeLegacy => evidence_cmd::purge_legacy(),
@@ -110,35 +146,6 @@ fn run(cli: Cli) -> Result<(), String> {
         Commands::Fix { case_id } => fix::run(&case_id),
         Commands::Release { session } => release::run(&session),
     }
-}
-
-fn cases() -> Result<(), String> {
-    let evidence_path = dirs::home_dir()
-        .ok_or("Failed to find home directory")?
-        .join(".agentcop/evidence.db");
-
-    if !evidence_path.exists() {
-        println!("No cases yet");
-        return Ok(());
-    }
-
-    let store = EvidenceStore::new(&evidence_path)
-        .map_err(|e| format!("Failed to open evidence store: {}", e))?;
-
-    let rows = store
-        .find_by_hash_prefix("")
-        .map_err(|e| format!("Failed to list cases: {}", e))?;
-
-    println!("Total cases: {}", rows.len());
-    for row in rows {
-        // Same ID that `agentcop fix` accepts: CASE- plus the first 12 hex characters of the hash.
-        let id: String = row.hash.chars().take(12).collect();
-        println!(
-            "CASE-{id}  {:<5}  {}  {}",
-            row.verdict, row.timestamp, row.reason
-        );
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -167,6 +174,6 @@ mod tests {
     #[test]
     fn can_parse_cases_command() {
         let cli = Cli::try_parse_from(vec!["agentcop", "cases"]).expect("Failed to parse");
-        assert!(matches!(cli.command, Commands::Cases));
+        assert!(matches!(cli.command, Commands::Cases { action: None, .. }));
     }
 }

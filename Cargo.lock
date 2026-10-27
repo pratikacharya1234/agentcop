@@ -305,6 +305,7 @@ dependencies = [
 name = "cop-cli"
 version = "0.0.1"
 dependencies = [
+ "chrono",
  "clap",
  "cop-core",
  "cop-evidence",
