@@ -147,7 +147,7 @@ I built AgentCop with Claude Code, and it was arrested more than once. The full 
 ## Status and roadmap
 
 - **Now:** v0.1 candidate. Claude Code hook, command-line tool, evidence store, Rule of Two, log-only mode, courtroom dashboard (local, on 127.0.0.1).
-- **Log-only trial week:** starts Tuesday 27 October 2026.
+- **Log-only trial week:** started Tuesday 27 October 2026. Day 2 check (Wednesday 28 October): doctor 7 pass, 1 warn (the expected log-only warning), 0 fail. One would-be block so far, reviewed and judged a true catch (the rule asked before the agent ran a script it had just written). Day 7 is Monday 2 November; the switch to enforce comes after that.
 - **Next:** Codex install path; egress proxy in the agent's path; live eBPF sensors; the courtroom releasing and thawing sessions.
 - **Planned, not built:** "Escape the Cop", a game idea. There is no design yet.
 
