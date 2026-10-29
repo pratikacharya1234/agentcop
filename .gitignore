@@ -33,9 +33,7 @@ courtroom/test-results/
 courtroom/playwright-report/
 courtroom/.vite/
 
-# Internal notes: kept local, not on GitHub
-brain.md
-CLAUDE.md
+# Internal notes: kept local. brain.md and CLAUDE.md are tracked in the private repo (backup); the master plan and docs/ are not.
 AgentCop Master Build Plan and Claude Code Prompt.md
 docs/*
 !docs/assets/
