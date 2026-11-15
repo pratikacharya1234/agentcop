@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.0-beta (unreleased)
+
+### Added
+- A published list of every known bypass in this release: "Known bypasses (v0.1.0-beta)" in [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
+- A beta banner in the README (do not run in production; log-only by default) and a roadmap for v0.1.1 and v0.2.
+
+### Changed
+- Documentation only: the README no longer promises audio, terminal theatrics, or adapters for other agents, because those are not in this build.
+
 ## Unreleased (v0.1 candidate)
 
 ### Added
@@ -23,4 +32,4 @@
 - Cop-protection rules deny writes only. Reads of cop state and settings are allowed.
 
 ### Known limits
-See [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
+See [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md). The command-line hook has no audio and no terminal theatrics in this build; the sound engine is a stub and the fun layer is planned for v0.2. Only Claude Code is supported.

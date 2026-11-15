@@ -4,6 +4,12 @@
 
 <h1 align="center">AgentCop</h1>
 
+> ⚠️ **v0.1.0-beta — do not run in production. Log-only by default.**
+> See [WHAT-AGENTCOP-DOES-NOT-CATCH.md](WHAT-AGENTCOP-DOES-NOT-CATCH.md) for the full list of known
+> bypasses before installing.
+
+**Trial status:** Self-hosted enforce-mode trial in progress; results posted to GitHub Discussions. Log-only is the default and cannot break your work on day one.
+
 <p align="center">
   <b>A cartoon cop for your AI coding agent: it stops dangerous actions before they run, and keeps tamper-evident evidence of everything.</b>
 </p>
@@ -17,7 +23,7 @@
 <!-- TODO: record docs/assets/arrest.gif with VHS (docs/assets/tapes/arrest.tape). Not recorded yet. -->
 > **GIF coming:** the arrest moment (`docs/assets/arrest.gif`) is not recorded yet. It will be a hook replay, not a live Claude Code session.
 
-> **Status: pre-release (v0.1 candidate).** Claude Code only, Linux only, command-line hook. It is a seatbelt, not a force field. Read [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md) before you rely on it. AgentCop is an unofficial hobby project with no connection to any police force.
+> **Status: v0.1.0-beta.** Claude Code only, Linux only, command-line hook. It is a seatbelt, not a force field. Read [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md) before you rely on it. AgentCop is an unofficial hobby project with no connection to any police force.
 
 ## Why
 
@@ -35,22 +41,21 @@ flowchart LR
   C -->|ask| E[Claude Code asks you]
   C -->|deny| F[tool is blocked]
   B --> G[(hash-chained<br/>evidence.db)]
-  F --> H[courtroom: case and mugshot]
+  F --> H[courtroom: local case dashboard]
 ```
 
 The judge is deterministic Rust. No language model is on the allow or deny path. The detective is a separate, offline Python reader. It has no tools, and it can only raise a case's severity. It can never release anyone.
 
 ## What happens when it catches something
 
-| Verdict | Sound today | What the agent and you see |
-| --- | --- | --- |
-| allow | none | nothing; the call runs |
-| ask | none | Claude Code asks you to confirm, with the reason and a case number |
-| deny | none | `Destructive remove on root or home [CASE-0123456789ab]` (example) |
-| honeytoken touched | none | `Honeytoken triggered: suspect took the bait [CASE-…]` (example) |
-| courtroom decision | synthesized gavel (courtroom only) | the decision appears in the timeline |
+| Verdict | What the agent and you see |
+| --- | --- |
+| allow | nothing; the call runs |
+| ask | Claude Code asks you to confirm, with the reason and a case number |
+| deny | `Destructive remove on root or home [CASE-0123456789ab]` (example) |
+| honeytoken touched | `Honeytoken triggered: suspect took the bait [CASE-…]` (example) |
 
-The command-line hook is silent in this build. Its sound clips are not shipped, so it has nothing to play.
+The hook prints a plain reason line and a case number. There is no audio and no terminal theatrics in this build; the sound and fun layer is planned for v0.2, or removed for good.
 
 ## Quick start
 
@@ -124,13 +129,14 @@ An old evidence store that holds raw commands is moved aside on the next run, to
 
 ## What it does NOT catch
 
-- **Other agents and other platforms.** Claude Code only. Codex has a parser as library code, but nothing installs it. Only Linux has been tested.
+- **Other agents and other platforms.** Claude Code only. Codex / OpenCode / Cursor adapters are planned for v0.2 (see roadmap). Only Linux has been tested.
 - **Anything the patterns did not anticipate.** Every rule is a regular expression on a command's steps. A new trick can pass.
 - **Indirect commands.** A script is read when a command runs it, but a script changed after that read is not checked again. Scripts run by `npm run`, `make` or `python x.py` are not read.
 - **HTTPS contents.** The egress proxy checks host names of HTTPS tunnels only, and it is not yet in the agent's path.
 - **Live kernel monitoring.** The eBPF and syscall sensors are library code tested with fixtures. Nothing loads a kernel probe.
 - **Process freezing.** The holding cell can freeze processes, but no running component calls it. A freeze blocks tool calls only.
 - **A trusted owner.** Anyone with root can change the hook, the policy or the evidence file. The evidence chain shows edits, not who made them.
+- **MCP servers.** Writing `.mcp.json` or `~/.claude.json` to register a code-executing MCP server, then calling it, is not seen by the rules. This is the biggest known hole in this release.
 
 Full list, with the tests behind each: [what AgentCop does not catch](WHAT-AGENTCOP-DOES-NOT-CATCH.md).
 
@@ -146,10 +152,27 @@ I built AgentCop with Claude Code, and it was arrested more than once. The full 
 
 ## Status and roadmap
 
-- **Now:** v0.1 candidate. Claude Code hook, command-line tool, evidence store, Rule of Two, log-only mode, courtroom dashboard (local, on 127.0.0.1).
-- **Log-only trial week:** started Tuesday 27 October 2026. Day 2 check (Wednesday 28 October): doctor 7 pass, 1 warn (the expected log-only warning), 0 fail. One would-be block so far, reviewed and judged a true catch (the rule asked before the agent ran a script it had just written). Day 7 is Monday 2 November; the switch to enforce comes after that.
-- **Next:** Codex install path; egress proxy in the agent's path; live eBPF sensors; the courtroom releasing and thawing sessions.
+- **Now:** v0.1.0-beta. Claude Code hook, command-line tool, evidence store, Rule of Two, log-only mode, courtroom dashboard (local, on 127.0.0.1).
+- **Log-only trial:** the shipped default is log-only, so nothing is blocked until you switch the policy yourself. The self-hosted enforce-mode trial is in progress; daily logs go to GitHub Discussions.
 - **Planned, not built:** "Escape the Cop", a game idea. There is no design yet.
+
+### Roadmap
+
+**v0.1.1 — close the known bypasses**
+
+- MCP and tool-poisoning rules: parse `.mcp.json` writes, deny registration of code-executing MCP servers, and read `mcp__*` tool payloads.
+- Exfiltration rules: body flags (`@file`, `<file`), interpreter network calls (`python` `urlopen`, `node` `fetch`), `nc` and stdin redirects.
+- Git and CI tampering rules: `.git/hooks/**`, `.github/workflows/**`, `package.json` scripts, `Makefile`, `Dockerfile`.
+- Secret-set expansion: `printenv`, `env`, `/proc/self/environ`, `~/.npmrc`, `~/.git-credentials`, `~/.kube/config`, `gh auth token`, `aws configure list`.
+- Fix the `git push --force` regex so a force push is denied, not merely asked about.
+- Rule of Two: the freeze arms on any credential read, not only on files with a famous name.
+
+**v0.2 — more agents, more eyes**
+
+- Adapter layer: canonical tool names, canonical path fields, rule `scope` as a regex or glob, an adapter field on `AgentEvent`, per-host verdict negotiation.
+- Codex / OpenCode / Cursor adapters.
+- OS-level sensors (eBPF) live; the holding cell wired into the verdict path.
+- Sound and theatrics implemented, or removed permanently.
 
 ## Contributing
 
