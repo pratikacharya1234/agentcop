@@ -27,6 +27,8 @@ __pycache__/
 *.egg-info/
 
 # Courtroom (Node)
+# Build output and installed packages are never committed: `npm ci` and `npm run build`
+# recreate them. `scripts/check.sh` builds them before the Playwright tests run.
 courtroom/node_modules/
 courtroom/dist/
 courtroom/test-results/
