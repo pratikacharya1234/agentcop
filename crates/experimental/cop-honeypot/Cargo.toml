@@ -1,0 +1,16 @@
+[package]
+name = "cop-honeypot"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pratik Acharya <acharyapratik214@gmail.com>"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cop-core = { path = "../../cop-core" }
+regex = "1.10"
+serde_json = "1.0"
+
+[dev-dependencies]
+
+# Standalone package: not a member of the AgentCop workspace (see crates/experimental/EXPERIMENTAL.md).
+[workspace]

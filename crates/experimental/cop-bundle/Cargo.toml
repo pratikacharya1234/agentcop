@@ -1,0 +1,19 @@
+[package]
+name = "cop-bundle"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pratik Acharya <acharyapratik214@gmail.com>"]
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+cop-core = { path = "../../cop-core" }
+cop-evidence = { path = "../../cop-evidence" }
+cop-policy = { path = "../../cop-policy" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[dev-dependencies]
+jsonschema = "0.60.1"
+
+# Standalone package: not a member of the AgentCop workspace (see crates/experimental/EXPERIMENTAL.md).
+[workspace]

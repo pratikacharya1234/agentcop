@@ -7,20 +7,25 @@ members = [
   "crates/cop-hook",
   "crates/cop-cli",
   "crates/cop-siren",
-  "crates/cop-logger",
-  "crates/cop-normalizer",
-  "crates/cop-codex",
-  "crates/cop-honeypot",
-  "crates/cop-ratelimit",
-  "crates/cop-pipeline",
-  "crates/cop-ebpf",
-  "crates/cop-family",
-  "crates/cop-syscalls",
-  "crates/cop-proxy",
-  "crates/cop-cell",
-  "crates/cop-bundle",
-  "crates/cop-taint",
   "crates/cop-shell",
+  "crates/cop-taint",
+]
+# Crates that no live binary depends on. They are kept as standalone packages (each has its own
+# [workspace] table) so they can be built and tested on their own, but they are not part of the
+# AgentCop build and not part of the release. See crates/experimental/EXPERIMENTAL.md.
+exclude = [
+  "crates/experimental/cop-bundle",
+  "crates/experimental/cop-cell",
+  "crates/experimental/cop-codex",
+  "crates/experimental/cop-ebpf",
+  "crates/experimental/cop-family",
+  "crates/experimental/cop-honeypot",
+  "crates/experimental/cop-logger",
+  "crates/experimental/cop-normalizer",
+  "crates/experimental/cop-pipeline",
+  "crates/experimental/cop-proxy",
+  "crates/experimental/cop-ratelimit",
+  "crates/experimental/cop-syscalls",
 ]
 
 [workspace.package]

@@ -106,7 +106,7 @@ fn bad_secret_regex_is_refused_at_load() {
 fn shipped_policy_file_loads() {
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../policy/egress.toml"
+        "/../../../policy/egress.toml"
     ))
     .unwrap();
     assert!(EgressPolicy::from_toml(&text).is_ok());

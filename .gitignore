@@ -3,6 +3,10 @@
 **/*.rs.bk
 *.pdb
 
+# Experimental crates are standalone packages: each one makes its own lock file.
+crates/experimental/*/Cargo.lock
+crates/experimental/*/target/
+
 # IDE
 .vscode/
 .idea/
