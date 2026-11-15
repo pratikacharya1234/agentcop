@@ -224,7 +224,7 @@ mod tests {
             "hook_type": "PreToolUse",
             "timestamp": "2026-10-20T10:00:00Z",
             "tool_name": "bash",
-            "tool_input": "export AWS_KEY=AKIA1234567890ABCDEF",
+            "tool_input": "export AWS_KEY=AKIAFAKEFAKEFAKEFAKE",
             "session_id": "sess-123",
             "user_id": "user-456"
         })
