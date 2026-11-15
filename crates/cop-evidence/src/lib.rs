@@ -137,7 +137,13 @@ impl EvidenceStore {
         input_hmac: &str,
         anchor: Option<&str>,
     ) -> SqliteResult<i64> {
-        let event_json = serde_json::to_string(&case.event).expect("Failed to serialize event");
+        // A serialization failure is an error, never a panic: the hook must fail closed, not crash.
+        let event_json = serde_json::to_string(&case.event).map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to serialize event: {e}"),
+            )))
+        })?;
         let verdict_str = match case.verdict {
             Verdict::Allow => "allow",
             Verdict::Ask => "ask",
@@ -328,7 +334,11 @@ fn is_genesis_row(event_json: &str) -> bool {
 /// The raw input is never stored or hashed without the key.
 pub fn input_hmac(key: &[u8], original: &str) -> String {
     use hmac::{Hmac, Mac};
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+    // HMAC accepts a key of any length, so this cannot fail. If it ever did, the input is not
+    // hashed: an empty digest is returned instead of a panic on the enforcement path.
+    let Ok(mut mac) = <Hmac<Sha256> as Mac>::new_from_slice(key) else {
+        return String::new();
+    };
     mac.update(original.as_bytes());
     mac.finalize()
         .into_bytes()
