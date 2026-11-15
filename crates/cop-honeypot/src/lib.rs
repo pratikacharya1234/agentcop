@@ -215,7 +215,10 @@ mod tests {
         ] {
             let event = sample_event(&format!("aws configure set aws_access_key_id {key}"));
             let alert = detector.check(&event);
-            assert!(alert.is_none(), "a real-shaped key {key} must not trip the honeytoken");
+            assert!(
+                alert.is_none(),
+                "a real-shaped key {key} must not trip the honeytoken"
+            );
         }
     }
 
