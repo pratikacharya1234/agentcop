@@ -68,13 +68,18 @@ pub struct HoneypotDetector {
 }
 
 impl HoneypotDetector {
-    /// Create a new detector with default traps
+    /// Create a new detector with default traps.
+    ///
+    /// The AWS trap only matches our own decoy, which always carries the marker `AKIAFAKE`.
+    /// A real AWS access key id has the shape `AKIA` plus 16 upper-case letters and digits, so a
+    /// pattern that matches that shape would trip on every real key the agent happens to see. The
+    /// marker keeps the trap honest: only our fake bait is caught (ADR 27, FP-1 follow-up).
     pub fn new() -> Result<Self, String> {
         let default_traps = vec![
             Trap::fake_credential(
                 "AWS key",
-                r"AKIA[0-9A-Z]{16}",
-                "AKIAIOSFODNN7EXAMPLE",
+                r"AKIAFAKE[0-9A-Z]{12}",
+                "AKIAFAKEFAKEFAKEFAKE",
                 "Fake AWS key detected in command",
             ),
             Trap::canary_host(
@@ -161,7 +166,7 @@ mod tests {
     #[test]
     fn detect_fake_aws_key() {
         let detector = HoneypotDetector::new().expect("Creation failed");
-        let event = sample_event("aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE");
+        let event = sample_event("aws configure set aws_access_key_id AKIAFAKEFAKEFAKEFAKE");
 
         let alert = detector.check(&event);
         assert!(alert.is_some());
@@ -198,14 +203,20 @@ mod tests {
     }
 
     #[test]
-    fn no_match_on_similar_but_different_keys() {
+    fn no_match_on_real_shaped_aws_keys() {
         let detector = HoneypotDetector::new().expect("Creation failed");
-        let event = sample_event("echo AKIA123456789ABCDE");
-
-        let alert = detector.check(&event);
-        // This might match depending on regex strictness, but legitimate AWS keys are longer
-        // For now, we're OK with this behavior
-        let _ = alert;
+        // A real AWS access key id has the shape AKIA + 16 upper-case letters and digits. The
+        // honeytoken must not fire on one, or a real key in a log or a test fixture would be
+        // reported as "the suspect took the bait" (FP-1 follow-up).
+        for key in [
+            "AKIAIOSFODNN7EXAMPLE",
+            "AKIA123456789ABCDE",
+            "AKIAQWERTYUIOPASDFG",
+        ] {
+            let event = sample_event(&format!("aws configure set aws_access_key_id {key}"));
+            let alert = detector.check(&event);
+            assert!(alert.is_none(), "a real-shaped key {key} must not trip the honeytoken");
+        }
     }
 
     #[test]
