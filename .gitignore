@@ -47,3 +47,16 @@ AgentCop Master Build Plan and Claude Code Prompt.md
 # Docs are tracked. Generated or private output under docs/ stays out: databases and raw evidence.
 docs/**/*.db
 docs/**/evidence/
+
+# Internal planning docs — never commit
+/AUDIT.md
+/BUILD-STORY.md
+/CLAUDE.md
+/brain.md
+/AgentCop Master Build Plan and Claude Code Prompt.md
+/docs/internal-affairs.md
+/docs/RELEASE-CHECKLIST.md
+/docs/phases/
+/docs/gates/
+/detective/.pytest_cache/
+/detective/**/__pycache__/
