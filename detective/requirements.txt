@@ -1,0 +1,5 @@
+# Pinned Python dependencies for the release gate.
+# `scripts/check.sh` builds a venv from this file (detective/.venv) and runs pytest inside it,
+# so a test run never depends on whatever happens to be installed system-wide.
+pydantic==2.13.5
+pytest==9.1.1

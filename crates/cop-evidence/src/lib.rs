@@ -264,7 +264,7 @@ impl EvidenceStore {
         )?;
         let rows = stmt.query_map(params![format!("{prefix}%")], |row| {
             Ok(EvidenceRecord {
-                id: row.get(0)?,
+                id: row.get::<_, i64>(0)? as u64,
                 timestamp: row.get(1)?,
                 event_json: row.get(2)?,
                 verdict: row.get(3)?,
@@ -287,7 +287,9 @@ impl EvidenceStore {
 
     pub fn count(&self) -> SqliteResult<u64> {
         self.conn
-            .query_row("SELECT COUNT(*) FROM cases", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM cases", [], |row| {
+                Ok(row.get::<_, i64>(0)? as u64)
+            })
     }
 }
 

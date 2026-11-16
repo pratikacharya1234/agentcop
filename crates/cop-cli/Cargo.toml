@@ -25,4 +25,4 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 
 [dev-dependencies]
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }

@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 hmac = "0.12"
 cop-core = { path = "../cop-core" }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 sha2 = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

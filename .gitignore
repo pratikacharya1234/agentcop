@@ -29,6 +29,8 @@ Thumbs.db
 __pycache__/
 .pytest_cache/
 *.egg-info/
+detective/.venv/
+detective/.deps/
 
 # Courtroom (Node)
 # Build output and installed packages are never committed: `npm ci` and `npm run build`

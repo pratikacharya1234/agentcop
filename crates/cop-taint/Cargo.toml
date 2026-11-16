@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 cop-core = { path = "../cop-core" }
 cop-shell = { path = "../cop-shell" }
 regex = "1.10"

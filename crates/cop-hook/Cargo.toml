@@ -23,6 +23,6 @@ sha2 = "0.10"
 
 [dev-dependencies]
 hmac = "0.12"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 sha2 = "0.10"
 
